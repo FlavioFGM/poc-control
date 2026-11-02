@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, RfiDetail as RfiDetailData, RfiItemOut, VeredictoRfi } from "@/api";
+import { api, RfiDetail as RfiDetailData, RfiDocumentoOut, RfiItemOut, VeredictoRfi } from "@/api";
 import { rotuloCategoria } from "@/categorias";
 import { DangerZone } from "@/components/DangerZone";
 import { useLanguage } from "@/i18n";
+import { formatElapsed, useElapsedSeconds } from "@/useElapsedSeconds";
 
 const VEREDITO_BADGE: Record<VeredictoRfi, string> = {
   atende: "badge-verde",
@@ -48,6 +49,10 @@ export function RfiDetail() {
     );
   }
 
+  const elapsedSeconds = useElapsedSeconds(
+    rfi && rfi.status_extracao === "extraindo" ? (rfi.processamento_iniciado_em ?? rfi.created_at) : undefined,
+  );
+
   if (erro) return <p className="alert alert-error">{erro}</p>;
   if (!rfi) return <p className="muted">{t("common.carregando")}</p>;
 
@@ -60,7 +65,6 @@ export function RfiDetail() {
   }
 
   const extraindo = rfi.status_extracao === "extraindo";
-  const avaliando = rfi.status_extracao === "pronto" && rfi.itens_avaliados < rfi.total_itens;
   const pct = rfi.total_itens > 0 ? Math.round((rfi.itens_avaliados / rfi.total_itens) * 100) : 0;
 
   return (
@@ -84,8 +88,40 @@ export function RfiDetail() {
       </div>
 
       {rfi.status_extracao === "erro" && <p className="alert alert-error">{rfi.erro_extracao}</p>}
-      {extraindo && <p className="alert alert-warning">{t("rfiDetail.extraindo")}</p>}
-      {!extraindo && avaliando && <p className="alert alert-warning">{t("rfiDetail.avaliando")}</p>}
+      {rfi.status_extracao === "pronto" && rfi.erro_extracao && (
+        <p className="alert alert-warning" style={{ whiteSpace: "pre-line" }}>
+          {t("rfiDetail.avisoExtracao")}
+          {"\n"}
+          {rfi.erro_extracao}
+        </p>
+      )}
+      {extraindo && (
+        <div className="alert alert-warning" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ flex: 1 }}>
+            <div>{t("rfiDetail.processando").replace("{tempo}", formatElapsed(elapsedSeconds))}</div>
+            <div>
+              <b>
+                {rfi.cancelamento_solicitado
+                  ? t("rfiDetail.cancelando")
+                  : rfi.progresso
+                    ? t(`rfiDetail.fase.${rfi.progresso.fase}`)
+                        .replace("{atual}", String(rfi.progresso.atual))
+                        .replace("{total}", String(rfi.progresso.total))
+                        .replace("{nome}", rfi.progresso.nome)
+                    : t("rfiDetail.iniciando")}
+              </b>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={rfi.cancelamento_solicitado}
+            onClick={() => void api.cancelarRfi(rfi.id).then(carregar)}
+          >
+            {t("rfiDetail.cancelar")}
+          </button>
+        </div>
+      )}
 
       {rfi.status_extracao === "pronto" && rfi.total_itens > 0 && (
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
@@ -97,6 +133,8 @@ export function RfiDetail() {
           </a>
         </div>
       )}
+
+      <RfiDocumentos rfi={rfi} bloqueado={extraindo} onMudou={carregar} />
 
       {rfi.status_extracao === "pronto" && rfi.total_itens === 0 && (
         <div className="card empty-state">{t("rfiDetail.nenhumItem")}</div>
@@ -129,6 +167,142 @@ export function RfiDetail() {
   );
 }
 
+function RfiDocumentos({
+  rfi,
+  bloqueado,
+  onMudou,
+}: {
+  rfi: RfiDetailData;
+  bloqueado: boolean;
+  onMudou: () => void;
+}) {
+  const { t } = useLanguage();
+  const [enviando, setEnviando] = useState(false);
+  const ocupado = enviando || bloqueado; // enquanto o RFI processa, a API recusa mudanças (409)
+  const [erro, setErro] = useState<string | null>(null);
+  const [incluirManuais, setIncluirManuais] = useState(false);
+  // Arquivos escolhidos mas ainda não enviados: dá pra juntar vários (em várias seleções) e só
+  // então disparar a extração, em vez de subir no instante em que o primeiro lote é escolhido.
+  const [pendentes, setPendentes] = useState<File[]>([]);
+
+  async function executar(acao: () => Promise<unknown>) {
+    setEnviando(true);
+    setErro(null);
+    try {
+      await acao();
+      onMudou();
+    } catch {
+      setErro(t("rfiDetail.erroDocumentos"));
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  function escolher(e: ChangeEvent<HTMLInputElement>) {
+    const novos = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    setPendentes((prev) => [
+      ...prev,
+      ...novos.filter((n) => !prev.some((p) => p.name === n.name && p.size === n.size)),
+    ]);
+  }
+
+  function enviar() {
+    const form = new FormData();
+    pendentes.forEach((a) => form.append("arquivos", a));
+    void executar(async () => {
+      await api.adicionarDocumentosRfi(rfi.id, form);
+      setPendentes([]);
+    });
+  }
+
+  function remover(doc: RfiDocumentoOut) {
+    let msg = t("rfiDetail.confirmarRemover").replace("{nome}", doc.nome_arquivo).replace("{n}", String(doc.total_itens));
+    if (doc.itens_manuais > 0) msg += t("rfiDetail.confirmarRemoverManuais").replace("{m}", String(doc.itens_manuais));
+    if (!window.confirm(msg)) return;
+    void executar(() => api.removerDocumentoRfi(rfi.id, doc.id));
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 20 }}>
+      <h3 style={{ marginTop: 0 }}>{t("rfiDetail.documentos")}</h3>
+      <ul style={{ margin: "0 0 12px", paddingLeft: 0, listStyle: "none" }}>
+        {rfi.documentos.map((doc) => (
+          <li key={doc.id} style={{ display: "flex", gap: 12, alignItems: "center", padding: "4px 0" }}>
+            <span style={{ flex: 1 }}>{doc.nome_arquivo}</span>
+            <span className="muted">{t("rfiDetail.itensDoDocumento").replace("{n}", String(doc.total_itens))}</span>
+            <button type="button" className="btn btn-secondary" disabled={ocupado} onClick={() => remover(doc)}>
+              {t("rfiDetail.removerDocumento")}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {pendentes.length > 0 && (
+        <ul style={{ margin: "0 0 12px", paddingLeft: 0, listStyle: "none" }}>
+          {pendentes.map((a, i) => (
+            <li key={`${a.name}-${i}`} style={{ display: "flex", gap: 12, alignItems: "center", padding: "4px 0" }}>
+              <span style={{ flex: 1 }}>
+                {a.name} <span className="muted">({t("rfiDetail.novo")})</span>
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={ocupado}
+                onClick={() => setPendentes((prev) => prev.filter((_, j) => j !== i))}
+              >
+                {t("rfiDetail.removerDocumento")}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <label className="btn btn-secondary" style={{ cursor: ocupado ? "default" : "pointer" }}>
+          {t("rfiDetail.selecionarArquivos")}
+          <input
+            type="file"
+            multiple
+            hidden
+            disabled={ocupado}
+            accept=".pdf,.docx,.xlsx,.csv,.txt,.md"
+            onChange={escolher}
+          />
+        </label>
+        {pendentes.length > 0 && (
+          <button type="button" className="btn btn-primary" disabled={ocupado} onClick={enviar}>
+            {enviando
+              ? t("rfiDetail.adicionando")
+              : t("rfiDetail.enviarPendentes").replace("{n}", String(pendentes.length))}
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn btn-secondary"
+          disabled={ocupado || rfi.total_itens === 0}
+          onClick={() => void executar(() => api.reavaliarRfi(rfi.id, incluirManuais))}
+        >
+          {t("rfiDetail.reavaliarTudo")}
+        </button>
+        {rfi.total_itens > rfi.itens_avaliados && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={ocupado}
+            onClick={() => void executar(() => api.reavaliarRfi(rfi.id, false, true))}
+          >
+            {t("rfiDetail.avaliarPendentes").replace("{n}", String(rfi.total_itens - rfi.itens_avaliados))}
+          </button>
+        )}
+        <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={incluirManuais} onChange={(e) => setIncluirManuais(e.target.checked)} />
+          {t("rfiDetail.reavaliarIncluirManuais")}
+        </label>
+      </div>
+      {erro && <p className="alert alert-error">{erro}</p>}
+    </div>
+  );
+}
+
 function RfiItemRow({
   rfiId,
   item,
@@ -145,6 +319,15 @@ function RfiItemRow({
   const [justificativa, setJustificativa] = useState(item.justificativa ?? "");
   const [salvando, setSalvando] = useState(false);
   const [reavaliando, setReavaliando] = useState(false);
+  const [promovendo, setPromovendo] = useState(false);
+
+  // Mirrors the server-side check in promover_item_rfi (api/app/rfi/router.py) -- a history-
+  // confirmed item's justificativa is always the fixed anonymous placeholder, and an item already
+  // linked to a procedure (internal match, or already promoted) has nothing new to add.
+  const podePromover =
+    (item.veredito === "atende" || item.veredito === "atende_parcial") &&
+    !item.procedimento_id &&
+    !item.confirmado_por_historico;
 
   const VEREDITO_LABEL: Record<VeredictoRfi, string> = {
     atende: t("rfiItemRow.atende"),
@@ -179,6 +362,16 @@ function RfiItemRow({
     }
   }
 
+  async function promover() {
+    setPromovendo(true);
+    try {
+      const atualizado = await api.promoverItemRfi(rfiId, item.id);
+      onAtualizado(atualizado);
+    } finally {
+      setPromovendo(false);
+    }
+  }
+
   return (
     <div className="item-row">
       <div
@@ -203,12 +396,22 @@ function RfiItemRow({
 
       {open && (
         <div className="item-row-body">
+          {!item.veredito && (
+            <p style={{ marginTop: 0 }}>
+              <b>{item.etapa ? t(`rfiItemRow.etapa.${item.etapa}`) : t("rfiItemRow.etapa.fila")}</b>
+            </p>
+          )}
           {item.justificativa && <p className="muted" style={{ marginTop: 0 }}>{item.justificativa}</p>}
           {item.procedimento_id && (
             <p style={{ marginTop: 0 }}>
               <Link to={`/procedimentos/${item.procedimento_id}`} className="btn btn-secondary" style={{ display: "inline-flex" }}>
                 {t("rfiItemRow.verProcedimentoInterno")}
               </Link>
+            </p>
+          )}
+          {item.confirmado_por_historico && (
+            <p style={{ marginTop: 0 }}>
+              <span className="badge badge-muted">{t("rfiItemRow.confirmadoHistorico")}</span>
             </p>
           )}
           {item.fontes.length > 0 && (
@@ -230,6 +433,11 @@ function RfiItemRow({
             <button className="btn btn-secondary" onClick={() => setEditando((v) => !v)} type="button">
               {editando ? t("common.cancelar") : t("rfiItemRow.sobrescrever")}
             </button>
+            {podePromover && (
+              <button className="btn btn-secondary" onClick={promover} disabled={promovendo} type="button">
+                {promovendo ? t("rfiItemRow.promovendo") : t("rfiItemRow.promover")}
+              </button>
+            )}
           </div>
 
           {editando && (

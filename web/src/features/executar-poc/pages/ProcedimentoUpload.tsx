@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { CODIGOS_CATEGORIA, rotuloCategoria } from "@/categorias";
 import { useLanguage } from "@/i18n";
+import { toggleInSet } from "@/toggleInSet";
 
 export function ProcedimentoUpload() {
   const { t, lang } = useLanguage();
@@ -47,6 +48,14 @@ export function ProcedimentoUpload() {
         <h1>{t("procedimentoUpload.titulo")}</h1>
       </div>
 
+      <div className="card" style={{ marginBottom: 20 }}>
+        <strong>{t("procedimentos.formatoRecomendadoTitulo")}</strong>
+        <p className="field-hint">{t("procedimentos.formatoRecomendado")}</p>
+        <a href="/exemplo-procedimento.html" download className="btn btn-secondary">
+          {t("procedimentos.baixarModelo")}
+        </a>
+      </div>
+
       <div className="card">
         <form onSubmit={handleSubmit} className="form">
           <div className="field">
@@ -78,14 +87,7 @@ export function ProcedimentoUpload() {
                   key={codigo}
                   type="button"
                   className={`chip-filter${categorias.has(codigo) ? " active" : ""}`}
-                  onClick={() =>
-                    setCategorias((atual) => {
-                      const novo = new Set(atual);
-                      if (novo.has(codigo)) novo.delete(codigo);
-                      else novo.add(codigo);
-                      return novo;
-                    })
-                  }
+                  onClick={() => setCategorias((atual) => toggleInSet(atual, codigo))}
                 >
                   {codigo} — {rotuloCategoria(codigo, lang)}
                 </button>

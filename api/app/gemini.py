@@ -2,6 +2,7 @@ import logging
 import math
 import time
 
+import httpx
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
@@ -16,9 +17,22 @@ EMBEDDING_DIM = 1536
 _MODEL = "gemini-embedding-001"
 _TEXT_MODEL = "gemini-3.8-flash"
 
+# Sem isto, HttpOptions.timeout fica None e o SDK repassa isso pro httpx como "sem timeout
+# nenhum" -- uma chamada que trava (conexão parada, sem erro nenhum) então espera pra sempre,
+# só cortada por fora (os 300s do nginx/AbortController do planejador, ou nada no caso de uma
+# tarefa em background como a extração de RFI/PoC, que não tem esse teto e ficava "extraindo"
+# indefinidamente sem nenhum erro no log). Descoberto ao vivo: um RFI de 2 linhas de texto ficou
+# "extraindo" por mais de 3 minutos sem nenhuma tentativa/erro registrado pelo _com_retry abaixo
+# -- prova de que a chamada nunca chegou a falhar, só nunca voltou. 120s é generoso pra
+# PDF/grounding e bem abaixo do teto de 300s de fora, pra falhar com um erro real em vez de travar.
+_HTTP_TIMEOUT_MS = 120_000
+
 
 def _client(api_key: str | None = None) -> genai.Client:
-    return genai.Client(api_key=api_key or settings.gemini_api_key)
+    return genai.Client(
+        api_key=api_key or settings.gemini_api_key,
+        http_options=types.HttpOptions(timeout=_HTTP_TIMEOUT_MS),
+    )
 
 
 def modelo_efetivo(model: str | None) -> str:
@@ -66,6 +80,11 @@ def interpretar_erro_gemini(exc: Exception) -> str:
     dump cru da exceção (ex.: "503 UNAVAILABLE {'error': {...}}"), que é o que aparecia antes
     em erro_extracao e deixava o usuário sem saber se era pra tentar de novo, trocar a chave
     ou reportar o bug."""
+    if isinstance(exc, httpx.TimeoutException):
+        return (
+            f"O Gemini não respondeu em {_HTTP_TIMEOUT_MS // 1000}s (travou ou está muito lento "
+            "agora). Tente de novo ou com um documento menor."
+        )
     codigo = getattr(exc, "code", None)
     if codigo == 503:
         return (
@@ -89,6 +108,12 @@ def interpretar_erro_gemini(exc: Exception) -> str:
         )
     if codigo == 500:
         return "Erro interno do Gemini. Tente novamente em alguns instantes."
+    if codigo == 504:
+        return (
+            "O Gemini demorou demais para gerar a resposta e o próprio serviço encerrou a "
+            "chamada (prazo esgotado do lado deles, não do nosso timeout). Tente novamente ou "
+            "com um documento menor."
+        )
     return f"Erro inesperado ao chamar o Gemini: {exc}"
 
 
@@ -222,7 +247,7 @@ Responda só com os dados pedidos, em português, sem inventar itens que não te
 """.replace("{categorias}", descricoes_formatadas())
 
 
-_RETRY_CODES = {429, 500, 503}
+_RETRY_CODES = {429, 500, 503, 504}
 
 
 def _com_retry(operacao, *, api_key: str | None, contexto: str, modelo: str | None):

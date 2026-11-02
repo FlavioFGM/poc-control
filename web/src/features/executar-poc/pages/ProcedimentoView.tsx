@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ProcedimentoDetail } from "@/api";
-import { rotuloCategoria } from "@/categorias";
 import { DangerZone } from "@/components/DangerZone";
 import { useLanguage } from "@/i18n";
+import { OrigemChip, ProcedimentoConteudo } from "../components/ProcedimentoConteudo";
 
 export function ProcedimentoView() {
-  const { t, lang } = useLanguage();
+  const { t } = useLanguage();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [procedimento, setProcedimento] = useState<ProcedimentoDetail | null>(null);
@@ -28,49 +28,13 @@ export function ProcedimentoView() {
     <div>
       <div className="page-header">
         <h1>{procedimento.titulo}</h1>
-        <span className={`badge badge-${procedimento.status}`}>{procedimento.status}</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <OrigemChip origem={procedimento.origem_conhecimento} />
+          <span className={`badge badge-${procedimento.status}`}>{procedimento.status}</span>
+        </div>
       </div>
 
-      <div className="card">
-        <p>
-          <strong>{t("procedimentoView.cliente")}</strong> {procedimento.cliente_origem ?? "—"} &nbsp;·&nbsp;{" "}
-          <strong>{t("procedimentoView.versao")}</strong> {procedimento.versao}
-        </p>
-        <p>
-          <strong>{t("procedimentoView.tags")}</strong> {procedimento.tags.join(", ") || "—"}
-        </p>
-        <p>
-          <strong>{t("procedimentoView.categorias")}</strong>{" "}
-          {procedimento.categorias.length > 0
-            ? procedimento.categorias.map((c) => (
-                <span key={c} className="chip" style={{ marginRight: 6 }}>
-                  {c} — {rotuloCategoria(c, lang)}
-                </span>
-              ))
-            : "—"}
-        </p>
-      </div>
-
-      <div className="card">
-        <h2>{t("procedimentoView.secoesIndexadas")}</h2>
-        <ul className="secoes-list">
-          {procedimento.secoes.map((s, i) => (
-            <li key={i} className={s.heading_level === 3 ? "sub" : undefined}>
-              {s.heading_title}
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="card">
-        <h2>{t("procedimentoView.conteudoOriginal")}</h2>
-        <iframe
-          title={procedimento.titulo}
-          sandbox="allow-same-origin"
-          srcDoc={procedimento.html_original}
-          className="html-frame"
-        />
-      </div>
+      <ProcedimentoConteudo procedimento={procedimento} />
 
       <DangerZone
         tipo="procedimentos"

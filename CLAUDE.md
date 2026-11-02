@@ -1,5 +1,24 @@
 # POC Control
 
+> **Nota de sincronização (2026-11-02):** este repositório é a base original de onde
+> `FlavioFGM/suse-poc-toolkit` nasceu (pasta `poc-control/` de lá, histórico completo preservado).
+> Desde então, todo o desenvolvimento continuou no monorepo; este Pull Request traz o estado atual
+> de volta pra cá. Duas diferenças em relação a rodar isto dentro do monorepo: (1) `poc-planner/`
+> aqui é só um `index.html` **vendorizado** (cópia de um momento específico, não o projeto irmão
+> completo com histórico/testes próprios — ver `poc-planner/README-VENDORED.md`); (2)
+> `docker-compose.yml`/`web/Dockerfile`/`scripts/update.sh` foram ajustados para rodar este
+> repositório sozinho (sem a pasta-irmã `../poc-planner/` que só existe dentro do monorepo). O
+> resto do texto abaixo ainda descreve a arquitetura como "uma pasta do monorepo" porque foi escrito
+> lá — mantido como referência de arquitetura, mesmo rodando aqui como repositório único. Ver
+> `docs/sincronizar-gbrlins-poc-control.md` para o mecanismo usado nesta sincronização e como repetir
+> o processo depois.
+
+> Este projeto passou a ser uma pasta do monorepo `suse-poc-toolkit` (histórico completo
+> preservado), ao lado de `../eib-builder/` e `../poc-planner/`. O planejador citado abaixo
+> (antes `plannerEngine.js` portado + cópia vendorizada via `scripts/vendor-planner.sh`) agora é
+> servido direto a partir de `../poc-planner/index.html` -- ver a seção "Planejador vendorizado e
+> conector" mais abaixo, atualizada.
+
 Ferramenta pessoal (depois, do time) pra cobrir o ciclo de PoC de cliente de ponta a ponta:
 **planejar** o escopo (tela inicial do app), **executar** com semáforo por item e acompanhamento
 de sessão, e fazer uma **triagem automática de TR/edital (RFI)** contra o portfólio SUSE.
@@ -12,7 +31,7 @@ só em pt-BR.
 
 ## Repositório e ambiente
 
-- Git: `https://github.com/gbrlins/poc-control.git`
+- Git: `https://github.com/FlavioFGM/suse-poc-toolkit.git`, folder `poc-control/` (own history preserved from the former `gbrlins/poc-control.git`). Se `gbrlins/poc-control` ganhar commits novos direto por lá, ver `poc-control/docs/sincronizar-gbrlins-poc-control.md` para o passo a passo de trazê-los pra cá sem perder histórico.
 - Servidor: Raspberry Pi na rede local, acessado por SSH com o alias `rasp` (chave em `~/.ssh/rasp`, ver `~/.ssh/config`). **Nunca** usar senha nem gravar credenciais em arquivos do repositório.
 - Exposição externa: `cloudflared` já instalado na Raspberry. Publicar só o serviço `web`. Recomendado proteger com Cloudflare Access além do login do app.
 - Tudo roda com `docker compose` em imagens **ARM64**.
@@ -23,15 +42,14 @@ O front end é dividido por feature para "Executar PoC", "Planejar PoC" e "RFI" 
 paralelo sem pisar um no outro:
 
 - `web/src/features/executar-poc/` — páginas desta ferramenta (POCs, Procedimentos). Dono: Gabriel.
-- `web/src/features/planejar-poc/` — o planejador em si: `engine/plannerEngine.js` (motor
-  imperativo porteado do "SUSE PoC Planner" do colega — render-to-string + `innerHTML`, com um
-  `window.P` global pros handlers, não uma árvore de componentes React) + `engine/planner.css`
-  (escopado em `#planner-root`) + o wrapper de página que monta isso na rota `/` (ver "O
-  planejador como tela inicial" abaixo). Deixou de ser um HTML estático num `<iframe>` desde a
-  migração pro motor "schema 2". Dono: time do planejador.
+- `web/src/features/planejar-poc/` — só o wrapper de rota (`pages/PlanPoc.tsx`) que embute o
+  planejador num `<iframe>` apontando pra `/planner/` na rota `/` (ver "O planejador como tela
+  inicial" abaixo). Nenhuma lógica do planejador mora aqui: ela é o projeto irmão
+  `../poc-planner/` (repo/histórico próprio dentro do monorepo), copiado sem alteração pro
+  `web/Dockerfile` em build time. Dono: time do planejador (`../poc-planner/`).
 - `web/src/features/rfi/` — triagem de TR/edital contra o portfólio SUSE (ver seção "RFI"
   abaixo). Dono: Gabriel.
-- `web/src/pages/` (Layout, Sidebar, Login, MinhaConta, Usuarios) e `web/src/i18n.tsx` são a
+- `web/src/pages/` (Layout, Home, Login, MinhaConta, Usuarios) e `web/src/i18n.tsx` são a
   casca compartilhada pelas três features — mudança aqui pede revisão de todos os lados.
 - `api/` cobre Executar PoC (`api/app/pocs/`, `api/app/classificacao/`, `api/app/procedimentos/`)
   e RFI (`api/app/rfi/`) — o planejador ainda não tem backend próprio além do que empresta de
@@ -180,10 +198,32 @@ categorias vive em `api/app/categorias.py` (não é uma migração, é um dicion
 
 ## O planejador como tela inicial
 
-Já foi um "modo" trocado no menu hambúrguer (Executar PoC vs. Planejar PoC); hoje é uma
-hierarquia única. A **tela inicial (`/`) é sempre o planejador**; "PoCs", "Procedimentos" e
-"RFI" são links diretos no menu lateral, ao lado de Usuários (admin) e Minha conta — o
-hambúrguer continua existindo, só perdeu a troca de modo.
+Já foi um "modo" trocado no menu hambúrguer (Executar PoC vs. Planejar PoC); depois virou uma
+hierarquia única com o planejador na própria raiz (`/`); hoje (`web/src/pages/Home.tsx`) a raiz é
+um **hub**, não o planejador em si: hero + um botão de ação por área (Planejar PoC, Analisador de
+RFI, Procedimentos) de cores diferentes, mais uma lista "mais recentes" compacta por área
+(PoCs/RFIs/Procedimentos) abaixo, cada uma linkando pra sua tela cheia com filtros (`/pocs`,
+`/rfis`, `/procedimentos`). O planejador em si vive em `/planejar` (o botão "Planejar PoC" do hub
+leva lá direto pra tela inicial DELE — sem pular etapa). Não existe mais um botão de atalho pra
+"Executar PoC" no hub: a lista "PoCs recentes" da Home e o link "ver todas" já cobrem o caminho até
+`/pocs` e `/pocs/:id` (rotas inalteradas), então o atalho duplicava um caminho que já existia.
+
+Houve um `?start=new`/`?start=import` que pulava a tela inicial do planejador direto pro passo
+"Projeto" ou pro formulário de importar documento (pra evitar "clicar em Iniciar duas vezes", uma
+no hub e outra lá). Removido (poc-planner/index.html's `applyUrlStart`, `PlanPoc.tsx`): o hub só
+tem UM botão "Planejar PoC" que leva pra tela inicial do planejador, e essa tela já lista "Novo
+Projeto", "Importar Projeto", "Importar documento do cliente" e "Biblioteca de procedimentos" como
+opções igualmente visíveis — eram exatamente os mesmos atalhos que o hub tentava duplicar um nível
+acima, só que incompletos (sem "Importar Projeto" nem a biblioteca). Pular essa tela também
+escondia essas duas opções por trás de um clique que ninguém pediu.
+
+Não há mais menu lateral (`Sidebar.tsx` foi removido): a navegação entre áreas é só pelo hub da
+Home, mais um botão "Início" (ícone de casa) no topbar, visível em toda página
+(`web/src/pages/Layout.tsx`), que sempre volta pra `/` -- clicar nele nunca perde nada em
+andamento, porque o planejador já salva cada mudança de estado no `localStorage` de forma síncrona
+(`saveState()`, chamado a cada tecla/clique, não só ao navegar). "Minha conta" e "Usuários" (só
+admin) viraram itens do dropdown de conta no topbar (`account-dropdown`), ao lado do e-mail do
+usuário -- não têm mais um lugar próprio na casca.
 
 - Seletor de idioma único (`web/src/i18n.tsx`, pt/en/es) cobre a casca do app e o planejador, que
   já tinha suas próprias traduções nas 3 línguas antes da integração — não muda a regra do topo
@@ -201,10 +241,13 @@ hambúrguer continua existindo, só perdeu a troca de modo.
   dentro** de `defaultState()` (não só atribuído em memória), porque `deepMerge()` só preserva
   chaves que já existem no default; qualquer chave fora disso é descartada a cada
   reload/switch/import de projeto.
-- Na etapa Resumo, seção "Plano de testes e resultados": se `pocControlId` existe, um botão abre
-  `/pocs/{id}` **numa aba nova** (a tela de execução real — semáforo, vínculo a procedimento,
-  Andamento, Apresentação, roteiro do dia — tudo inalterado); se não existe (projeto feito do
-  zero), um botão "Habilitar execução desta PoC" cria esse vínculo quando o usuário quiser.
+- No Início do planejador e na etapa Resumo (`executionBlockHtml`, mesma função nos dois
+  lugares): se `pocControlId` existe, um botão abre `/pocs/{id}` com `target="_top"` — navega a
+  janela de cima (o shell do poc-control), não abre aba nova nem tenta carregar a SPA inteira
+  dentro do próprio iframe do planejador — (a tela de execução real — semáforo, vínculo a
+  procedimento, Andamento, Apresentação, roteiro do dia — tudo inalterado); se não existe (projeto
+  feito do zero), um botão "Habilitar execução desta PoC" cria esse vínculo quando o usuário
+  quiser.
 - A aba "Testes" própria do assistente (local, status `pending/scheduled/running/pass/
   partial/fail/na`) e a execução real no backend **não são sincronizadas** — são dois mundos
   independentes, decisão deliberada: sincronizar de verdade só funcionaria dentro do mesmo
@@ -215,12 +258,13 @@ hambúrguer continua existindo, só perdeu a troca de modo.
 
 - Alternância clara/escura: botão no topbar (`web/src/pages/Layout.tsx`), ao lado do seletor de
   idioma. Escreve o atributo `data-theme` na `<html>` e persiste na mesma chave de localStorage
-  que `plannerEngine.js` já usava internamente (`suse_poc_planner_theme`) e nunca tinha exposto
-  um botão pra alternar — os dois lados ficam em sincronia sem se avisar, de graça. CSS escuro:
-  bloco `:root[data-theme="dark"]` em `web/src/styles.css` + bloco
-  `html[data-theme="dark"] #planner-root` em `engine/planner.css` (paleta restaurada do
-  `html[data-theme="dark"]` que o planejador original tinha, removida quando ele foi portado pro
-  bundle).
+  que o `poc-planner/index.html` já lê sozinho no carregamento (`suse_poc_planner_theme`). Como o
+  planejador agora roda num `<iframe>` (documento separado), a chave compartilhada não basta pra
+  sincronizar ao vivo: `Layout.tsx` também dispara um evento `window` (`poc-control:theme-changed`)
+  a cada troca, e `PlanPoc.tsx` escuta esse evento pra recarregar o iframe (o planejador persiste
+  tudo em localStorage continuamente, então recarregar não perde nada em andamento). CSS escuro:
+  bloco `:root[data-theme="dark"]` em `web/src/styles.css`; o CSS escuro do planejador em si mora
+  só em `poc-planner/index.html`.
 - Rodapé (canto inferior esquerdo, em toda tela): versão (`package.json`) + data/hora exata do
   build, injetadas em build-time via `define` no `vite.config.ts` — não em runtime no navegador
   — pra dar pra confirmar visualmente se um deploy pegou.
@@ -257,14 +301,17 @@ hambúrguer continua existindo, só perdeu a troca de modo.
   pra lá. Na prática, pelo menos 1x por dia em dia de trabalho ativo no projeto; sem rigidez
   nenhuma se não houver mudança real pra publicar.
 
-## Planejador vendorizado e conector (`/planner/`)
+## Planejador servido em `/planner/`, e também na rota `/`
 
-Além do motor portado em `web/src/features/planejar-poc/` (que o app usa na rota `/`), o app serve **uma cópia
-idêntica** do `index.html` do SUSE PoC Planner (repo `FlavioFGM/EIB-SUSE-PoC`, pasta `poc-planner/`) em
-`/planner/`, de `web/public/planner/`. Não é um fork: o arquivo nunca é editado aqui. Pra atualizar, rode
-`scripts/vendor-planner.sh <clone do EIB-SUSE-PoC>` (exige o arquivo commitado lá) e commite o resultado;
-`web/public/planner/SOURCE` guarda o commit e o sha256 de origem. As regras do nginx pra `/planner` e `/planner/`
-ficam em `web/nginx.conf` (sem elas o fallback da SPA engole essas URLs).
+O app serve o `index.html` do SUSE PoC Planner (projeto irmão `../poc-planner/` neste mesmo
+monorepo) em `/planner/`, copiado **sem alteração** pelo `web/Dockerfile` em build time (não é
+mais um script de vendorização separado: como é o mesmo repositório agora, o Dockerfile só faz
+`COPY ../poc-planner/index.html ./public/planner/index.html` antes do build do Vite -- sempre
+reflete o que estiver na branch). A rota `/` (tela inicial autenticada) é a `Layout` normal do
+app com um `<iframe src="/planner/?lang=...">` (`web/src/features/planejar-poc/pages/PlanPoc.tsx`);
+`/planner/` sozinho também funciona direto (sem login do app -- usado por `demo/local-stack.sh`
+do planejador, por exemplo). As regras do nginx pra `/planner` e `/planner/` ficam em
+`web/nginx.conf` (sem elas o fallback da SPA engole essas URLs).
 
 Por estar na mesma origem do `/api`, essa cópia usa o cookie de sessão e liga o **conector** quando
 `GET /api/planner/capabilities` responde (rota sem login, em `api/app/planner/`). O conector só envia algo ao

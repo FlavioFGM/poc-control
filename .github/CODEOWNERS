@@ -1,7 +1,4 @@
 # CODEOWNERS — mapeia cada feature para quem revisa suas PRs.
-# Importante: troque @TODO-dono-planejar-poc pelo handle real do GitHub de quem mantém o
-# "Planejar PoC". Um handle inválido/placeholder faz o GitHub ignorar a linha em silêncio
-# (sem erro) em vez de pedir revisão — então até trocar, essas linhas não têm efeito.
 
 # Dono padrão (cai aqui tudo que não casar com uma regra mais específica abaixo).
 *                                   @gbrlins
@@ -15,13 +12,12 @@
 /docker-compose.yml                 @gbrlins
 /.env.example                       @gbrlins
 
-# Planejar PoC: wizard (portado para o bundle do app em features/planejar-poc/engine/) +
-# wrapper de rota.
-/web/src/features/planejar-poc/    @TODO-dono-planejar-poc
+# Planejar PoC: só o wrapper de rota que embute ../poc-planner/ num iframe (ver CLAUDE.md).
+/web/src/features/planejar-poc/    @FlavioFGM
 
 # Casca do site (navbar, menu, idioma, dashboard, login): compartilhada pelas duas
 # features — mudança aqui afeta os dois lados, revisão conjunta recomendada.
-/web/src/pages/                    @gbrlins @TODO-dono-planejar-poc
-/web/src/i18n.tsx                  @gbrlins @TODO-dono-planejar-poc
-/web/src/App.tsx                   @gbrlins @TODO-dono-planejar-poc
-/web/src/styles.css                @gbrlins @TODO-dono-planejar-poc
+/web/src/pages/                    @gbrlins @FlavioFGM
+/web/src/i18n.tsx                  @gbrlins @FlavioFGM
+/web/src/App.tsx                   @gbrlins @FlavioFGM
+/web/src/styles.css                @gbrlins @FlavioFGM

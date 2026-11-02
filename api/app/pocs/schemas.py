@@ -50,6 +50,7 @@ class ClassificacaoOut(BaseModel):
     justificativa: str | None
     fontes: list[FonteOut]
     procedimento_id: uuid.UUID | None
+    confirmado_por_historico: bool = False
     modelo: str | None
     created_at: datetime
 
@@ -177,6 +178,8 @@ class PocListItem(BaseModel):
     itens_concluidos: int
     responsavel_id: uuid.UUID | None = None
     responsavel_email: str | None = None
+    criado_por_email: str | None = None
+    produtos: list[str] = []
 
 
 class PocDetail(PocListItem):

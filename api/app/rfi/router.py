@@ -1,4 +1,3 @@
-import pathlib
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile, status
@@ -8,17 +7,16 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import exclusao as excl
-from app.config import settings
 from app.db import get_db
 from app.deps import get_current_user
 from app.gemini_key import resolve_api_key, resolve_model
-from app.models import OrigemClassificacao, Rfi, RfiItem, StatusExtracao, User
-from app.pocs.planilha_import import texto_de_planilha
-from app.rfi.documento_import import texto_de_docx
+from app.models import OrigemClassificacao, OrigemConhecimento, Rfi, RfiDocumento, RfiItem, StatusExtracao, StatusProcedimento, User, VeredictoRfi
+from app.procedimentos.router import _criar_procedimento, _escapar_html
+from app.rfi.documentos import TEXTO_COLADO_NOME, ler_conteudo, remover_arquivo, salvar_documento
 from app.rfi.export import montar_rfi_export_html, montar_rfi_export_xlsx
-from app.rfi.schemas import RfiDetail, RfiItemManualUpdate, RfiItemOut, RfiListItem
+from app.rfi.schemas import RfiDetail, RfiDocumentoOut, RfiItemManualUpdate, RfiItemOut, RfiListItem
 from app.rfi.service import avaliar_item_rfi
-from app.rfi.tasks import processar_rfi
+from app.rfi.tasks import iniciar_processamento, processar_rfi, reavaliar_rfi
 
 router = APIRouter(prefix="/api/rfis", tags=["rfis"], dependencies=[Depends(get_current_user)])
 
@@ -44,6 +42,9 @@ def _list_item(db: Session, rfi: Rfi) -> RfiListItem:
         status_extracao=rfi.status_extracao,
         criado_por_email=rfi.criado_por.email,
         created_at=rfi.created_at,
+        processamento_iniciado_em=rfi.processamento_iniciado_em,
+        progresso=rfi.progresso,
+        cancelamento_solicitado=rfi.cancelamento_solicitado,
         total_itens=total,
         itens_avaliados=avaliados,
         responsavel_id=rfi.responsavel_id,
@@ -73,91 +74,75 @@ def listar_rfis(db: Session = Depends(get_db)):
     return [_list_item(db, rfi) for rfi in rfis]
 
 
+def _ler_uploads(arquivos: list[UploadFile] | None, texto: str | None) -> list[tuple[str, bytes]]:
+    """Valida cada arquivo (e o texto colado, que vira mais um documento) ANTES de gravar qualquer
+    coisa, pra um arquivo ruim não deixar um RFI pela metade."""
+    docs: list[tuple[str, bytes]] = []
+    for arq in arquivos or []:
+        if not arq.filename:
+            continue
+        conteudo = arq.file.read()
+        try:
+            ler_conteudo(arq.filename, conteudo)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+        docs.append((arq.filename, conteudo))
+    if (texto or "").strip():
+        docs.append((TEXTO_COLADO_NOME, texto.strip().encode("utf-8")))
+    return docs
+
+
+def _exigir_ocioso(rfi: Rfi) -> None:
+    if rfi.status_extracao == StatusExtracao.extraindo:
+        raise HTTPException(status.HTTP_409_CONFLICT, "O RFI ainda está sendo processado; aguarde terminar")
+
+
+def _documento_out(db: Session, doc: RfiDocumento) -> RfiDocumentoOut:
+    total = db.query(func.count(RfiItem.id)).filter(RfiItem.documento_id == doc.id).scalar() or 0
+    manuais = (
+        db.query(func.count(RfiItem.id))
+        .filter(RfiItem.documento_id == doc.id, RfiItem.origem == OrigemClassificacao.manual)
+        .scalar()
+        or 0
+    )
+    return RfiDocumentoOut(
+        id=doc.id, nome_arquivo=doc.nome_arquivo, created_at=doc.created_at, total_itens=total, itens_manuais=manuais
+    )
+
+
 @router.post("", response_model=RfiListItem, status_code=status.HTTP_201_CREATED)
 def criar_rfi(
     background_tasks: BackgroundTasks,
     titulo: str = Form(""),
     orgao: str = Form(""),
-    arquivo: UploadFile | None = File(None),
+    arquivos: list[UploadFile] | None = File(None),
     texto: str | None = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     # Título/órgão são opcionais aqui (diferente de criar_poc): a extração já tenta sugeri-los
     # a partir do próprio documento (ver app/rfi/tasks.py::processar_rfi).
-    pdf_bytes: bytes | None = None
-    planilha_bytes: bytes | None = None
-    nome_arquivo: str | None = None
-    texto_arquivo: str | None = None
-
-    if arquivo is not None and arquivo.filename:
-        conteudo = arquivo.file.read()
-        if not conteudo:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Arquivo vazio")
-        nome_arquivo = arquivo.filename
-        extensao = pathlib.Path(nome_arquivo).suffix.lower()
-        if extensao == ".pdf":
-            pdf_bytes = conteudo
-        elif extensao in (".xlsx", ".csv"):
-            try:
-                texto_arquivo = texto_de_planilha(conteudo, extensao)
-            except ValueError as exc:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-            planilha_bytes = conteudo
-        elif extensao == ".docx":
-            try:
-                texto_arquivo = texto_de_docx(conteudo)
-            except ValueError as exc:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-            planilha_bytes = conteudo
-        else:
-            try:
-                texto_arquivo = conteudo.decode("utf-8")
-            except UnicodeDecodeError:
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST,
-                    "Não foi possível ler o arquivo como texto; envie um PDF, um Word (.docx), uma "
-                    "planilha XLSX/CSV, ou um arquivo de texto em UTF-8",
-                )
-
-    texto_final = (texto or "").strip() or texto_arquivo
-    if not pdf_bytes and not texto_final:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Envie o documento do edital/TR, ou cole o texto")
+    docs = _ler_uploads(arquivos, texto)
+    if not docs:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Envie o(s) documento(s) do edital/TR, ou cole o texto")
 
     rfi = Rfi(
         titulo=titulo,
         orgao=orgao,
-        status_extracao=StatusExtracao.extraindo,
         criado_por_id=current_user.id,
         responsavel_id=current_user.id,
         nome_arquivo="",
         caminho_arquivo="",
     )
+    iniciar_processamento(rfi)
     db.add(rfi)
+    db.flush()
+    criados = [salvar_documento(db, rfi, nome, conteudo) for nome, conteudo in docs]
     db.commit()
     db.refresh(rfi)
 
-    rfi_dir = pathlib.Path(settings.uploads_dir) / "rfis" / str(rfi.id)
-    rfi_dir.mkdir(parents=True, exist_ok=True)
-    if pdf_bytes:
-        nome = nome_arquivo or "rfi.pdf"
-        caminho = rfi_dir / nome
-        caminho.write_bytes(pdf_bytes)
-    elif planilha_bytes:
-        nome = nome_arquivo or "rfi-importado"
-        caminho = rfi_dir / nome
-        caminho.write_bytes(planilha_bytes)
-    else:
-        nome = nome_arquivo or "rfi-importado.txt"
-        caminho = rfi_dir / nome
-        caminho.write_text(texto_final, encoding="utf-8")
-
-    rfi.nome_arquivo = nome
-    rfi.caminho_arquivo = str(caminho)
-    db.commit()
-
     background_tasks.add_task(
-        processar_rfi, rfi.id, pdf_bytes, texto_final, resolve_api_key(current_user), resolve_model(current_user)
+        processar_rfi, rfi.id, [d.id for d in criados], resolve_api_key(current_user), resolve_model(current_user)
     )
     return _list_item(db, rfi)
 
@@ -169,9 +154,89 @@ def obter_rfi(rfi_id: uuid.UUID, db: Session = Depends(get_db)):
         **_list_item(db, rfi).model_dump(),
         erro_extracao=rfi.erro_extracao,
         modelo_extracao=rfi.modelo_extracao,
-        nome_arquivo=rfi.nome_arquivo,
+        documentos=[_documento_out(db, d) for d in rfi.documentos],
         itens=[RfiItemOut.model_validate(i) for i in rfi.itens],
     )
+
+
+@router.post("/{rfi_id}/documentos", response_model=RfiListItem, status_code=status.HTTP_202_ACCEPTED)
+def adicionar_documentos(
+    rfi_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    arquivos: list[UploadFile] | None = File(None),
+    texto: str | None = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Anexa documentos a um RFI existente: extrai e avalia só os itens NOVOS (os existentes, e
+    qualquer veredito manual, ficam como estão)."""
+    rfi = _get_rfi_or_404(db, rfi_id)
+    _exigir_ocioso(rfi)
+    docs = _ler_uploads(arquivos, texto)
+    if not docs:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Envie ao menos um documento, ou cole o texto")
+    criados = [salvar_documento(db, rfi, nome, conteudo) for nome, conteudo in docs]
+    iniciar_processamento(rfi)
+    db.commit()
+    background_tasks.add_task(
+        processar_rfi, rfi.id, [d.id for d in criados], resolve_api_key(current_user), resolve_model(current_user)
+    )
+    return _list_item(db, rfi)
+
+
+@router.delete("/{rfi_id}/documentos/{documento_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remover_documento(rfi_id: uuid.UUID, documento_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Remove o documento, o arquivo e TODOS os itens extraídos dele (inclusive os com veredito
+    manual -- o front avisa antes, ver RfiDocumentoOut.itens_manuais)."""
+    rfi = _get_rfi_or_404(db, rfi_id)
+    _exigir_ocioso(rfi)
+    doc = db.get(RfiDocumento, documento_id)
+    if doc is None or doc.rfi_id != rfi_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Documento não encontrado")
+    # Remove os itens explicitamente (não só pelo ON DELETE CASCADE do banco): o ORM não tem
+    # relationship Documento->Itens, então só assim a sessão fica consistente.
+    db.query(RfiItem).filter(RfiItem.documento_id == doc.id).delete(synchronize_session=False)
+    remover_arquivo(doc)
+    db.delete(doc)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{rfi_id}/cancelar", response_model=RfiListItem, status_code=status.HTTP_202_ACCEPTED)
+def cancelar_processamento(rfi_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Pede a interrupção do processamento em andamento. A tarefa em background confere o pedido
+    entre um passo e outro (documento, item) e para; uma chamada já em curso ao Gemini termina antes."""
+    rfi = _get_rfi_or_404(db, rfi_id)
+    if rfi.status_extracao != StatusExtracao.extraindo:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Não há processamento em andamento neste RFI")
+    rfi.cancelamento_solicitado = True
+    db.commit()
+    return _list_item(db, rfi)
+
+
+@router.post("/{rfi_id}/reavaliar", response_model=RfiListItem, status_code=status.HTTP_202_ACCEPTED)
+def reavaliar_todos(
+    rfi_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    incluir_manuais: bool = False,
+    somente_pendentes: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Reavalia todos os itens em background; por padrão preserva os vereditos sobrescritos à mão."""
+    rfi = _get_rfi_or_404(db, rfi_id)
+    _exigir_ocioso(rfi)
+    iniciar_processamento(rfi)
+    db.commit()
+    background_tasks.add_task(
+        reavaliar_rfi,
+        rfi.id,
+        incluir_manuais,
+        resolve_api_key(current_user),
+        resolve_model(current_user),
+        somente_pendentes,
+    )
+    return _list_item(db, rfi)
 
 
 @router.patch("/{rfi_id}/itens/{item_id}", response_model=RfiItemOut)
@@ -182,6 +247,7 @@ def sobrescrever_veredito(
     item.veredito = payload.veredito
     item.justificativa = payload.justificativa
     item.origem = OrigemClassificacao.manual
+    item.confirmado_por_historico = False
     item.modelo = None
     db.commit()
     db.refresh(item)
@@ -197,6 +263,69 @@ def reavaliar_item(
 ):
     item = _get_item_or_404(db, rfi_id, item_id)
     avaliar_item_rfi(db, item, api_key=resolve_api_key(current_user), model=resolve_model(current_user))
+    db.refresh(item)
+    return item
+
+
+def _html_da_resposta_rfi(rfi: Rfi, item: RfiItem) -> str:
+    """Mesmo formato de wrapping de texto-plano-em-HTML do `validar_anexo` de PoC
+    (app/pocs/router.py) -- aqui sintetizado direto da resposta do item (não há anexo pro RFI),
+    já que extrair_secoes não exige h2/h3: um parágrafo + uma lista de fontes, sem nenhum
+    cabeçalho, ainda produz um chunk "Visão geral" (confirmado lendo html_processing.py)."""
+    partes = [f"<h2>{_escapar_html(item.codigo)}</h2>", f"<p>{_escapar_html(item.descricao)}</p>"]
+    if item.justificativa:
+        partes.append(f"<p>{_escapar_html(item.justificativa)}</p>")
+    if item.fontes:
+        links = "".join(
+            f'<li><a href="{_escapar_html(f["url"])}">{_escapar_html(f["titulo"])}</a></li>' for f in item.fontes
+        )
+        partes.append(f"<ul>{links}</ul>")
+    return "\n".join(partes)
+
+
+@router.post("/{rfi_id}/itens/{item_id}/promover", response_model=RfiItemOut)
+def promover_item_rfi(
+    rfi_id: uuid.UUID,
+    item_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Leva uma resposta de RFI confirmada para a base de conhecimento (Procedimentos), tagueada
+    `origem_conhecimento=rfi` -- o equivalente, do lado RFI, do checkbox "Validado" que PoC já tem
+    (app/pocs/router.py::validar_anexo). Reaproveita `item.procedimento_id` pra guardar o vínculo
+    com o procedimento recém-criado: é o mesmo campo que já significa "existe um procedimento
+    interno que confirma isto", então o link "Ver procedimento interno" do front funciona sem
+    nenhuma mudança, e o próprio campo preenchido vira a trava natural contra promover duas vezes.
+    """
+    rfi = _get_rfi_or_404(db, rfi_id)
+    item = _get_item_or_404(db, rfi_id, item_id)
+
+    if item.veredito not in (VeredictoRfi.atende, VeredictoRfi.atende_parcial):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Só itens com veredito 'atende' ou 'atende parcial' podem virar conhecimento")
+    if item.procedimento_id is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Este item já está vinculado a um procedimento")
+    if item.confirmado_por_historico:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Itens confirmados por histórico não têm uma justificativa própria para catalogar",
+        )
+
+    procedimento = _criar_procedimento(
+        db,
+        titulo=f"{item.codigo} — {item.descricao}"[:255],
+        tags=[item.categoria] if item.categoria else [],
+        categorias=[item.categoria_codigo] if item.categoria_codigo else [],
+        cliente_origem=rfi.orgao or None,
+        data_origem=None,
+        status_valor=StatusProcedimento.validado,
+        versao=1,
+        html=_html_da_resposta_rfi(rfi, item),
+        api_key=resolve_api_key(current_user),
+        dono_id=current_user.id,
+        origem=OrigemConhecimento.rfi,
+    )
+    item.procedimento_id = procedimento.id
+    db.commit()
     db.refresh(item)
     return item
 

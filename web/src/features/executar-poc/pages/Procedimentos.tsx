@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, ProcedimentoListItem } from "@/api";
+import { api, OrigemConhecimento, ProcedimentoDetail, ProcedimentoListItem } from "@/api";
 import { CODIGOS_CATEGORIA, rotuloCategoria } from "@/categorias";
 import { useLanguage } from "@/i18n";
+import { toggleInSet } from "@/toggleInSet";
+import { OrigemChip, ProcedimentoConteudo } from "../components/ProcedimentoConteudo";
+
+const ORIGENS: OrigemConhecimento[] = ["manual", "poc", "rfi"];
 
 export function Procedimentos() {
   const { t, lang } = useLanguage();
   const [itens, setItens] = useState<ProcedimentoListItem[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [filtroCategorias, setFiltroCategorias] = useState<Set<string>>(new Set());
+  const [filtroOrigens, setFiltroOrigens] = useState<Set<OrigemConhecimento>>(new Set());
 
   useEffect(() => {
     api
@@ -19,19 +24,19 @@ export function Procedimentos() {
   }, []);
 
   function alternarFiltro(codigo: string) {
-    setFiltroCategorias((atual) => {
-      const novo = new Set(atual);
-      if (novo.has(codigo)) novo.delete(codigo);
-      else novo.add(codigo);
-      return novo;
-    });
+    setFiltroCategorias((atual) => toggleInSet(atual, codigo));
+  }
+
+  function alternarOrigem(origem: OrigemConhecimento) {
+    setFiltroOrigens((atual) => toggleInSet(atual, origem));
   }
 
   const filtrados = useMemo(() => {
     if (!itens) return [];
-    if (filtroCategorias.size === 0) return itens;
-    return itens.filter((p) => p.categorias.some((c) => filtroCategorias.has(c)));
-  }, [itens, filtroCategorias]);
+    return itens
+      .filter((p) => filtroCategorias.size === 0 || p.categorias.some((c) => filtroCategorias.has(c)))
+      .filter((p) => filtroOrigens.size === 0 || filtroOrigens.has(p.origem_conhecimento));
+  }, [itens, filtroCategorias, filtroOrigens]);
 
   return (
     <div>
@@ -47,6 +52,19 @@ export function Procedimentos() {
 
       {itens && itens.length > 0 && (
         <div className="card" style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", marginBottom: 8 }}>{t("procedimentos.filtroOrigem")}</label>
+          <div className="chip-filter-group" style={{ marginBottom: 14 }}>
+            {ORIGENS.map((origem) => (
+              <button
+                key={origem}
+                type="button"
+                className={`chip-filter${filtroOrigens.has(origem) ? " active" : ""}`}
+                onClick={() => alternarOrigem(origem)}
+              >
+                {t(`procedimentos.origem${origem[0].toUpperCase()}${origem.slice(1)}`)}
+              </button>
+            ))}
+          </div>
           <label style={{ display: "block", marginBottom: 8 }}>{t("procedimentos.filtroCategoria")}</label>
           <div className="chip-filter-group">
             {CODIGOS_CATEGORIA.map((codigo) => (
@@ -67,46 +85,61 @@ export function Procedimentos() {
 
       {itens && itens.length > 0 && (
         <div className="card">
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t("procedimentos.colTitulo")}</th>
-                  <th>{t("procedimentos.colCategorias")}</th>
-                  <th>{t("procedimentos.colTags")}</th>
-                  <th>{t("procedimentos.colCliente")}</th>
-                  <th>{t("procedimentos.colStatus")}</th>
-                  <th>{t("procedimentos.colVersao")}</th>
-                  <th>{t("procedimentos.colDono")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtrados.map((p) => (
-                  <tr key={p.id}>
-                    <td>
-                      <Link to={`/procedimentos/${p.id}`}>{p.titulo}</Link>
-                    </td>
-                    <td className="muted">
-                      {p.categorias.length > 0
-                        ? p.categorias.map((c) => (
-                            <span key={c} className="chip" style={{ marginRight: 4 }} title={rotuloCategoria(c, lang)}>
-                              {c}
-                            </span>
-                          ))
-                        : "—"}
-                    </td>
-                    <td className="muted">{p.tags.join(", ") || "—"}</td>
-                    <td>{p.cliente_origem ?? "—"}</td>
-                    <td>
-                      <span className={`badge badge-${p.status}`}>{p.status}</span>
-                    </td>
-                    <td>{p.versao}</td>
-                    <td className="muted">{p.responsavel_email ?? t("procedimentos.semDono")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {filtrados.length === 0 && <div className="empty-state">{t("procedimentos.nenhumComFiltro")}</div>}
+          {filtrados.map((p) => (
+            <ProcedimentoRow key={p.id} item={p} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProcedimentoRow({ item }: { item: ProcedimentoListItem }) {
+  const { t, lang } = useLanguage();
+  const [open, setOpen] = useState(false);
+  const [detalhe, setDetalhe] = useState<ProcedimentoDetail | null>(null);
+  const [carregando, setCarregando] = useState(false);
+
+  useEffect(() => {
+    if (!open || detalhe) return;
+    setCarregando(true);
+    api
+      .obterProcedimento(item.id)
+      .then(setDetalhe)
+      .finally(() => setCarregando(false));
+  }, [open, detalhe, item.id]);
+
+  return (
+    <div className={open ? "item-row open" : "item-row"}>
+      <div className="item-row-head" onClick={() => setOpen((v) => !v)}>
+        <span className="item-titulo">{item.titulo}</span>
+        <OrigemChip origem={item.origem_conhecimento} />
+        {item.categorias.length > 0 && (
+          <span className="muted" style={{ fontSize: 12 }}>
+            {item.categorias.map((c) => rotuloCategoria(c, lang)).join(", ")}
+          </span>
+        )}
+        <span className="muted" style={{ fontSize: 12 }}>
+          {item.cliente_origem ?? "—"}
+        </span>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {item.responsavel_email ?? t("procedimentos.semDono")}
+        </span>
+        <span className={`badge badge-${item.status}`}>{item.status}</span>
+      </div>
+
+      {open && (
+        <div className="item-row-body">
+          {carregando && <p className="muted">{t("common.carregando")}</p>}
+          {detalhe && (
+            <>
+              <ProcedimentoConteudo procedimento={detalhe} />
+              <Link to={`/procedimentos/${item.id}`} className="btn btn-secondary">
+                {t("procedimentos.abrirTelaCheia")}
+              </Link>
+            </>
+          )}
         </div>
       )}
     </div>

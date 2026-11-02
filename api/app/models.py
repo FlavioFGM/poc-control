@@ -36,6 +36,17 @@ class StatusProcedimento(str, enum.Enum):
     validado = "validado"
 
 
+class OrigemConhecimento(str, enum.Enum):
+    """De onde um Procedimento veio: digitado/upload manual, promovido de um item de PoC
+    (app/pocs/router.py::validar_anexo) ou promovido de uma resposta de RFI
+    (app/rfi/router.py::promover_item_rfi). Distinto de OrigemClassificacao (auto/manual de uma
+    classificação) -- este é sobre a origem do CONTEÚDO, não de quem o classificou."""
+
+    manual = "manual"
+    poc = "poc"
+    rfi = "rfi"
+
+
 class Procedimento(Base):
     __tablename__ = "procedimentos"
 
@@ -46,6 +57,11 @@ class Procedimento(Base):
     data_origem: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[StatusProcedimento] = mapped_column(
         Enum(StatusProcedimento, name="status_procedimento"), default=StatusProcedimento.rascunho
+    )
+    # De onde este registro veio -- ver OrigemConhecimento acima. Migração 0022; default "manual"
+    # cobre tudo que existia antes dela.
+    origem_conhecimento: Mapped[OrigemConhecimento] = mapped_column(
+        Enum(OrigemConhecimento, name="origem_conhecimento"), nullable=False, default=OrigemConhecimento.manual
     )
     versao: Mapped[int] = mapped_column(Integer, default=1)
     html_original: Mapped[str] = mapped_column(Text, nullable=False)
@@ -76,6 +92,13 @@ class Procedimento(Base):
         `ProcedimentoListItem.model_validate(procedimento)` sem um builder manual, diferente de
         Poc/Rfi que já montam a resposta campo a campo."""
         return self.responsavel.email if self.responsavel else None
+
+    @property
+    def criado_por_email(self) -> str | None:
+        """Mesmo papel de Rfi.criado_por (lá exposto manualmente em rfi/router.py) -- aqui via
+        property, mesma razão de responsavel_email acima. Usado pela busca "quem inseriu" das
+        listagens (Home e /procedimentos)."""
+        return self.criado_por.email if self.criado_por else None
 
 
 class ProcedimentoChunk(Base):
@@ -265,6 +288,11 @@ class Item(Base):
     )
     # Texto livre até a ADR 4 trazer o dono de verdade (responsavel_id).
     responsavel: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Nulo até o item virar um sucesso validado (item_executado_sem_problemas) -- ver
+    # app/classificacao/service.py::atualizar_embedding_historico. Alimenta a busca de evidência
+    # por histórico do RFI Analyser (_buscar_candidatos_historico); não tem relação com
+    # ResultadoCatalogo (ADR 1), que é anônimo e não guarda texto.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -309,6 +337,11 @@ class Classificacao(Base):
     procedimento_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("procedimentos.id", ondelete="SET NULL"), nullable=True
     )
+    # True quando o verde veio da busca por histórico compartilhado (ver
+    # app/classificacao/service.py::classificar_item e _buscar_candidatos_historico), não de um
+    # procedimento validado (procedimento_id) nem de uma pesquisa web -- mesmo papel de
+    # RfiItem.confirmado_por_historico, migrado junto (0021).
+    confirmado_por_historico: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Nome do modelo do Gemini que de fato classificou o item (só em classificações automáticas
     # — override manual não chama o Gemini, então fica nulo). Mesma motivação de Poc.modelo_extracao.
     modelo: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -353,6 +386,14 @@ class Rfi(Base):
     responsavel_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # Início da execução em andamento (extração/avaliação) -- o cronômetro do front usa isto, não
+    # created_at, porque documentos podem ser adicionados e o RFI reavaliado muito depois da criação.
+    processamento_iniciado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # O que a execução em andamento está fazendo agora: {"fase": lendo|avaliando|reavaliando, "atual": n,
+    # "total": m, "nome": documento/código}. Só dados -- o front monta o texto no idioma da interface.
+    progresso: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Pedido de interrupção, lido pela tarefa em background entre um passo e outro (ver app/rfi/tasks.py).
+    cancelamento_solicitado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -363,6 +404,29 @@ class Rfi(Base):
     itens: Mapped[list["RfiItem"]] = relationship(
         back_populates="rfi", cascade="all, delete-orphan", order_by="RfiItem.ordem"
     )
+    documentos: Mapped[list["RfiDocumento"]] = relationship(
+        back_populates="rfi", cascade="all, delete-orphan", order_by="RfiDocumento.created_at"
+    )
+
+
+class RfiDocumento(Base):
+    """Um documento (PDF, Word, planilha ou texto colado) de um RFI. Um RFI pode ter vários; cada
+    RfiItem aponta pro documento de onde veio (documento_id), então remover o documento remove
+    seus itens (CASCADE)."""
+
+    __tablename__ = "rfi_documentos"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    rfi_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("rfis.id", ondelete="CASCADE"), nullable=False
+    )
+    nome_arquivo: Mapped[str] = mapped_column(String(255), nullable=False)
+    caminho_arquivo: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    rfi: Mapped["Rfi"] = relationship(back_populates="documentos")
 
 
 class RfiItem(Base):
@@ -371,6 +435,10 @@ class RfiItem(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     rfi_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("rfis.id", ondelete="CASCADE"), nullable=False
+    )
+    # Documento de origem do item; CASCADE: remover o documento remove os itens extraídos dele.
+    documento_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("rfi_documentos.id", ondelete="CASCADE"), nullable=True
     )
     codigo: Mapped[str] = mapped_column(String(50), nullable=False)
     categoria: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -393,7 +461,18 @@ class RfiItem(Base):
     procedimento_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("procedimentos.id", ondelete="SET NULL"), nullable=True
     )
+    # True quando o atendimento veio da busca por histórico de execuções bem-sucedidas (ver
+    # app/rfi/service.py::_avaliar_por_historico), não de um procedimento interno (procedimento_id)
+    # nem da web (fontes). Deliberadamente não guarda qual PoC/cliente -- mesma anonimidade da ADR 1.
+    confirmado_por_historico: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Nulo até este item virar ele mesmo evidência (veredito atende) -- ver
+    # app/classificacao/service.py::atualizar_embedding_historico_rfi. Faz deste item buscável
+    # pela mesma _buscar_candidatos_historico que já lia só itens.embedding, fechando o ciclo:
+    # uma PoC confirma um RFI, um RFI confirma uma PoC, ambos confirmam o próximo RFI.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     modelo: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Passo da avaliação em curso (procedimento|historico|web|classificando); nulo fora da avaliação.
+    etapa: Mapped[str | None] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

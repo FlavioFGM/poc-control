@@ -1,5 +1,14 @@
 # POC Control
 
+> **Sync note (2026-11-02):** this is the original repo `FlavioFGM/suse-poc-toolkit`'s
+> `poc-control/` was forked from. Development continued there since; this Pull Request brings the
+> current state back here. `poc-planner/` in this PR is a vendored, point-in-time copy of a single
+> file (`index.html`), not the full sibling project with its own history/tests/docs that the
+> monorepo has — see `poc-planner/README-VENDORED.md`. `docker-compose.yml`, `web/Dockerfile` and
+> `scripts/update.sh` were adjusted to build/run this repo standalone (no `../poc-planner/` sibling
+> folder outside the monorepo). See `docs/sincronizar-gbrlins-poc-control.md` for the mechanism
+> used and how to repeat it for a future sync.
+
 Personal tool (soon, a team tool) for running customer proofs-of-concept end to end: plan the
 scope, extract the test plan, cross-reference it against a base of already-validated
 procedures, and track execution with session notes, status, and client-ready summaries.
@@ -74,22 +83,23 @@ entered, in Portuguese, regardless of the UI language.
 Frontend is split by feature so the two halves can evolve independently:
 
 - `web/src/features/executar-poc/` — this tool's own pages (PoCs, Procedures).
-- `web/src/features/planejar-poc/` — the wizard, ported into the shared bundle at
-  `features/planejar-poc/engine/` (see note below) plus its route wrapper.
+- `web/src/features/planejar-poc/` — a thin route wrapper (`pages/PlanPoc.tsx`) that embeds the
+  planner. No planner logic lives here (see note below).
 - `web/src/pages/` (Layout, Sidebar, Dashboard, Login, My account, Users) and `web/src/i18n.tsx`
   are the shell shared by both features.
-- `api/` is 100% Executar PoC (the planner has no backend yet).
+- `api/` is 100% Executar PoC, plus three stateless endpoints the planner's optional connector
+  calls (`api/app/planner/`).
 
-**Note on the planner's internals**: `plannerEngine.js` is a near-verbatim port of the original
-standalone tool's logic (sizing tables, port requirements, EIB JSON builder, architecture
-diagram, wizard state) — still an imperative render-to-string engine with a global `window.P`
-handler object, not a tree of idiomatic React components per step. What changed is that it now
-compiles into the same bundle, shares the app's visual theme (`engine/planner.css`, scoped under
-`#planner-root` to avoid clashing with the shared `styles.css`), and gets its language directly
-from the app's single switch — instead of being a separate static HTML file loaded in an
-`<iframe>` via `postMessage`. Rewriting it into real per-step React components is tracked in the
-Roadmap below; it's a large project of its own and carries real regression risk against the
-sizing/network/EIB business logic if rushed.
+**Note on the planner's internals**: the wizard itself — sizing tables, port requirements, EIB
+JSON builder, architecture diagram, wizard state — is not part of this codebase at all. It lives
+in the sibling `../poc-planner/` project (its own repo history, its own tests) as a single
+self-contained `index.html`. This app never forks or re-implements it: `web/Dockerfile` copies
+`../poc-planner/index.html` verbatim into the image at build time, nginx serves it at `/planner/`
+(same origin as `/api`, so its session cookie and optional connector work), and `PlanPoc.tsx`
+embeds that same URL in an `<iframe>` on the home route. An earlier version of this app carried a
+hand-ported copy of the planner's logic (`plannerEngine.js`); it had already drifted behind
+`poc-planner/index.html` and is gone now that there's one source to serve directly. See
+`../poc-planner/docs/design-unification.md` (ADR 3) for the history of that decision.
 
 - Embeddings: Gemini's embedding model, fixed dimension (`EMBEDDING_DIM` in `api/app/gemini.py`)
   to match the pgvector column — **not** user-configurable (unlike the text-generation model),
@@ -102,7 +112,10 @@ sizing/network/EIB business logic if rushed.
 
 ## Running it
 
-- `docker compose up -d --build` with a `.env` based on `.env.example`.
+- `docker compose up -d --build` with a `.env` based on `.env.example`. The `web` image's build
+  context is the repo root (`..`), not this folder, because it embeds `../poc-planner/index.html`
+  verbatim — see `web/Dockerfile`. Running the command from inside this folder still works; just
+  don't move `docker-compose.yml` without the sibling `poc-planner/` it reaches up to.
 - Migrations run via Alembic (`docker compose exec api alembic upgrade head`).
 - Deployed on a Raspberry Pi over SSH, `cloudflared` exposes only the `web` service externally
   (Cloudflare Access recommended on top of the app's own login).
@@ -112,8 +125,6 @@ sizing/network/EIB business logic if rushed.
 Planned next steps, in no particular priority order — added as they get planned, not all
 committed to a date:
 
-- **Componentize the planner wizard**: replace `plannerEngine.js`'s render-to-string/global-`P`
-  approach with real per-step React components, sharing form primitives with Executar PoC.
 - **Multi-user collaboration**: today the data model already has `user_id` everywhere, but the
   app is single-user. Next step is real accounts working on the same PoCs concurrently without
   stepping on each other — ownership/visibility rules, and probably a backend for the planner

@@ -50,6 +50,8 @@ class RedeSugerida(BaseModel):
     vip_cluster: str = ""
     pool_ip_inicio: str = ""
     pool_ip_fim: str = ""
+    ntp: str = ""
+    dns: str = ""
 
 
 class TesteSugerido(BaseModel):
@@ -57,11 +59,18 @@ class TesteSugerido(BaseModel):
     motivo: str = ""
 
 
+class MaquinaSugerida(BaseModel):
+    produto: str
+    hostname: str = ""
+    ip: str = ""
+
+
 class ExtracaoHidratacao(BaseModel):
     projeto: ProjetoSugerido
     rede: RedeSugerida
     produtos: list[str] = []
     testes: list[TesteSugerido] = []
+    maquinas: list[MaquinaSugerida] = []
 
 
 _HIDRATACAO_PROMPT = """\
@@ -74,11 +83,16 @@ nomes, e-mails, datas nem IPs.
 - projeto: nome_projeto, cliente (empresa/órgão final), organizacao (se diferente do cliente), responsavel \
 e email_responsavel (a pessoa técnica responsável pela PoC do lado da SUSE, só se identificável), data_alvo \
 (AAAA-MM-DD, prazo/entrega da PoC), caso_de_uso, problema_de_negocio e ambiente_alvo (resumos de 1-2 frases).
-- rede: cidr_gerenciamento, gateway, vip_cluster, pool_ip_inicio, pool_ip_fim, só se estiverem escritos.
+- rede: cidr_gerenciamento, gateway, vip_cluster, pool_ip_inicio, pool_ip_fim, ntp, dns, só se estiverem escritos. \
+ntp e dns podem ser hostname ou IP, um valor ou uma lista (copie como está escrito no documento).
 - produtos: quais destes ids fazem parte do escopo (use só estes ids):
   virtualization (SUSE Virtualization/Harvester), rancher (Rancher Prime), security (SUSE Security/NeuVector), \
 storage (SUSE Storage/Longhorn), observability (SUSE Observability/StackState), registry (SUSE Private \
 Registry), appcollection (SUSE Application Collection), manager (SUSE Multi-Linux Manager).
+- maquinas: para cada máquina/nó que o documento nomear com hostname e/ou IP, emita {{produto, hostname, ip}} \
+com "produto" um dos ids da lista acima. Quando um produto tiver mais de uma máquina (ex.: vários nós do \
+Virtualization), liste-as NA MESMA ORDEM em que aparecem no documento -- a ordem importa, é assim que o \
+planejador associa cada máquina ao nó certo. Só inclua o que estiver escrito; nunca invente hostname nem IP.
 - testes: quais testes do CATÁLOGO abaixo o documento pede ou implica (ex.: criar máquinas virtuais implica \
 SUSE Virtualization e o teste de criar VM). Use só os ids do catálogo, com um "motivo" curto citando o trecho \
 ou a ideia do documento. Se nada se aplicar, lista vazia.
@@ -144,6 +158,9 @@ def montar_hidratacao(extraido: ExtracaoHidratacao, catalogo: dict) -> dict:
     rede = {
         "managementCidr": _cidr(r.cidr_gerenciamento), "gatewayIp": _ip(r.gateway), "clusterVip": _ip(r.vip_cluster),
         "ipPoolStart": _ip(r.pool_ip_inicio), "ipPoolEnd": _ip(r.pool_ip_fim),
+        # Texto livre (hostname ou IP, um valor ou lista) -- não dá pra validar como IP estrito, o
+        # próprio planejador guarda isso como string livre (state.network.ntpServers/dnsServers).
+        "ntpServers": _texto(r.ntp, 200), "dnsServers": _texto(r.dns, 200),
     }
     vistos: set[str] = set()
     testes = []
@@ -151,6 +168,13 @@ def montar_hidratacao(extraido: ExtracaoHidratacao, catalogo: dict) -> dict:
         if t.id in catalogo["tests"] and t.id not in vistos:
             vistos.add(t.id)
             testes.append({"id": t.id, "reason": _texto(t.motivo, 300)})
+    maquinas = []
+    for m in extraido.maquinas:
+        if m.produto not in PRODUTOS_PLANEJADOR:
+            continue
+        hostname, ip = _texto(m.hostname, 255), _ip(m.ip)
+        if hostname or ip:
+            maquinas.append({"product": m.produto, "hostname": hostname, "ip": ip})
     return {
         "kind": "suse-poc-hydration",
         "schema": 1,
@@ -158,6 +182,7 @@ def montar_hidratacao(extraido: ExtracaoHidratacao, catalogo: dict) -> dict:
         "network": {k: v for k, v in rede.items() if v},
         "selectedProducts": {pid: True for pid in PRODUTOS_PLANEJADOR if pid in extraido.produtos},
         "tests": testes,
+        "vms": maquinas,
     }
 
 

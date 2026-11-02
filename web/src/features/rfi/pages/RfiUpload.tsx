@@ -11,14 +11,14 @@ export function RfiUpload() {
   const [titulo, setTitulo] = useState("");
   const [orgao, setOrgao] = useState("");
   const [modo, setModo] = useState<Modo>("arquivo");
-  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [arquivos, setArquivos] = useState<File[]>([]);
   const [texto, setTexto] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (modo === "arquivo" && !arquivo) {
+    if (modo === "arquivo" && arquivos.length === 0) {
       setErro(t("rfiUpload.erroSelecione"));
       return;
     }
@@ -32,7 +32,7 @@ export function RfiUpload() {
       const form = new FormData();
       form.append("titulo", titulo);
       form.append("orgao", orgao);
-      if (modo === "arquivo" && arquivo) form.append("arquivo", arquivo);
+      if (modo === "arquivo") arquivos.forEach((a) => form.append("arquivos", a));
       if (modo === "texto") form.append("texto", texto);
       const criado = await api.criarRfi(form);
       navigate(`/rfis/${criado.id}`);
@@ -91,9 +91,34 @@ export function RfiUpload() {
                 <input
                   id="arquivo"
                   type="file"
+                  multiple
                   accept=".pdf,.docx,.xlsx,.csv,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain,text/markdown"
-                  onChange={(e) => setArquivo(e.target.files?.[0] ?? null)}
+                  onChange={(e) => {
+                    // Acumula entre seleções (o input nativo substituiria a lista); ignora repetidos.
+                    const novos = Array.from(e.target.files ?? []);
+                    setArquivos((prev) => [
+                      ...prev,
+                      ...novos.filter((n) => !prev.some((p) => p.name === n.name && p.size === n.size)),
+                    ]);
+                    e.target.value = "";
+                  }}
                 />
+                {arquivos.length > 0 && (
+                  <ul style={{ margin: "8px 0", paddingLeft: 0, listStyle: "none" }}>
+                    {arquivos.map((a, i) => (
+                      <li key={`${a.name}-${i}`} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <span style={{ flex: 1 }}>{a.name}</span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => setArquivos((prev) => prev.filter((_, j) => j !== i))}
+                        >
+                          {t("rfiUpload.remover")}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <p className="field-hint">{t("rfiUpload.hintArquivo")}</p>
               </>
             ) : (

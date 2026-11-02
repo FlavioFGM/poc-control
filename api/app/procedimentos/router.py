@@ -1,5 +1,6 @@
 import uuid
 from datetime import date
+from html import escape as _escapar_html
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status as http_status
 from pydantic import BaseModel
@@ -11,7 +12,7 @@ from app.db import get_db
 from app.deps import get_current_user
 from app.gemini import embed_document
 from app.gemini_key import resolve_api_key
-from app.models import Procedimento, ProcedimentoChunk, StatusProcedimento, User
+from app.models import OrigemConhecimento, Procedimento, ProcedimentoChunk, StatusProcedimento, User
 from app.procedimentos.html_processing import extrair_secoes
 from app.procedimentos.schemas import ProcedimentoDetail, ProcedimentoListItem, SecaoOut
 
@@ -33,6 +34,7 @@ def _criar_procedimento(
     html: str,
     api_key: str | None = None,
     dono_id: uuid.UUID | None = None,
+    origem: OrigemConhecimento = OrigemConhecimento.manual,
 ) -> Procedimento:
     secoes = extrair_secoes(html)
     if not secoes:
@@ -45,6 +47,7 @@ def _criar_procedimento(
         cliente_origem=cliente_origem,
         data_origem=data_origem,
         status=status_valor,
+        origem_conhecimento=origem,
         versao=versao,
         html_original=html,
         criado_por_id=dono_id,

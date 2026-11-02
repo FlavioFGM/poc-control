@@ -1,14 +1,14 @@
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: docker.io/pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Run scripts/init-env.sh to create .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/init-env.sh to create .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Run scripts/init-env.sh to create .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -17,16 +17,20 @@ services:
   api:
     build: ./api
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Run scripts/init-env.sh to create .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/init-env.sh to create .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Run scripts/init-env.sh to create .env}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
-      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}
-      SESSION_SECRET: ${SESSION_SECRET}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?Run scripts/init-env.sh to create .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Run scripts/init-env.sh to create .env}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
     volumes:
-      - ./seed:/app/seed:ro
-      - ./uploads:/app/uploads
+      # :Z relabels these host directories for the container's SELinux context (needed on
+      # SELinux-enforcing hosts, e.g. SLES -- without it the api container gets a plain
+      # PermissionError writing under uploads/, even though it runs as root: SELinux denies it
+      # before Unix permissions are even considered). No-op/harmless on hosts without SELinux.
+      - ./seed:/app/seed:ro,Z
+      - ./uploads:/app/uploads:Z
     depends_on:
       db:
         condition: service_healthy
@@ -40,7 +44,11 @@ services:
     restart: unless-stopped
 
   web:
-    build: ./web
+    build:
+      # Repo root, not ./web: the image embeds the vendored poc-planner/index.html
+      # at build time (see web/Dockerfile and poc-planner/README-VENDORED.md).
+      context: .
+      dockerfile: web/Dockerfile
     depends_on:
       - api
     ports:

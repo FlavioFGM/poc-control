@@ -7,10 +7,19 @@ from app.models import OrigemClassificacao, StatusExtracao, VeredictoRfi
 from app.pocs.schemas import FonteOut
 
 
+class RfiDocumentoOut(BaseModel):
+    id: uuid.UUID
+    nome_arquivo: str
+    created_at: datetime
+    total_itens: int
+    itens_manuais: int  # itens com veredito sobrescrito à mão -- somem junto se o documento for removido
+
+
 class RfiItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    documento_id: uuid.UUID | None = None
     codigo: str
     categoria: str | None
     categoria_codigo: str | None = None
@@ -21,6 +30,8 @@ class RfiItemOut(BaseModel):
     fontes: list[FonteOut]
     origem: OrigemClassificacao | None
     procedimento_id: uuid.UUID | None = None
+    confirmado_por_historico: bool = False
+    etapa: str | None = None
     modelo: str | None
     created_at: datetime
 
@@ -40,6 +51,9 @@ class RfiListItem(BaseModel):
     status_extracao: StatusExtracao
     criado_por_email: str
     created_at: datetime
+    processamento_iniciado_em: datetime | None = None
+    progresso: dict | None = None
+    cancelamento_solicitado: bool = False
     total_itens: int
     itens_avaliados: int
     responsavel_id: uuid.UUID | None = None
@@ -49,5 +63,5 @@ class RfiListItem(BaseModel):
 class RfiDetail(RfiListItem):
     erro_extracao: str | None
     modelo_extracao: str | None
-    nome_arquivo: str
+    documentos: list[RfiDocumentoOut]
     itens: list[RfiItemOut]

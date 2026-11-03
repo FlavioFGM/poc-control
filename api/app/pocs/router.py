@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.categorias import normalizar as normalizar_categoria
-from app.classificacao.service import classificar_item, sugerir_procedimentos
+from app.classificacao.service import atualizar_embedding_historico, classificar_item, sugerir_procedimentos
 from app.classificacao.tasks import classificar_pendentes
 from app.config import settings
 from app.db import get_db
@@ -22,6 +22,7 @@ from app.models import (
     Item,
     Nota,
     OrigemClassificacao,
+    OrigemConhecimento,
     Poc,
     PocDocumento,
     Prerequisito,
@@ -38,7 +39,7 @@ from app.pocs.planilha_import import texto_de_planilha
 from app.pocs.planner_import import extrair_parametros_tecnicos
 from app.pocs.resultados import sincronizar_resultado_catalogo
 from app import exclusao as excl
-from app.procedimentos.router import _criar_procedimento
+from app.procedimentos.router import _criar_procedimento, _escapar_html
 from app.procedimentos.schemas import ProcedimentoListItem as ProcedimentoListItemOut
 from app.pocs.roteiro import montar_roteiro_html
 from app.pocs.schemas import (
@@ -72,6 +73,19 @@ def _contar_itens(db: Session, poc_id: uuid.UUID) -> tuple[int, int]:
     return total, concluidos
 
 
+def _produtos_poc(db: Session, poc_id: uuid.UUID) -> list[str]:
+    """Códigos de produto (taxonomia fixa) distintos entre os itens da PoC -- não existe campo de
+    produto na Poc em si, só por item (categoria_codigo), então a lista exibida no "banco de dados
+    de PoCs" (home) é derivada aqui, não armazenada."""
+    linhas = (
+        db.query(Item.categoria_codigo)
+        .filter(Item.poc_id == poc_id, Item.categoria_codigo != "")
+        .distinct()
+        .all()
+    )
+    return [codigo for (codigo,) in linhas]
+
+
 def _list_item(db: Session, poc: Poc) -> PocListItem:
     total, concluidos = _contar_itens(db, poc.id)
     return PocListItem(
@@ -85,6 +99,8 @@ def _list_item(db: Session, poc: Poc) -> PocListItem:
         itens_concluidos=concluidos,
         responsavel_id=poc.responsavel_id,
         responsavel_email=poc.responsavel.email if poc.responsavel else None,
+        criado_por_email=poc.criado_por.email if poc.criado_por else None,
+        produtos=_produtos_poc(db, poc.id),
     )
 
 
@@ -465,7 +481,13 @@ def gerar_roteiro(poc_id: uuid.UUID, item_ids: list[uuid.UUID] = Query(...), db:
 
 
 @router.patch("/{poc_id}/itens/{item_id}", response_model=ItemOut)
-def atualizar_item(poc_id: uuid.UUID, item_id: uuid.UUID, payload: ItemUpdate, db: Session = Depends(get_db)):
+def atualizar_item(
+    poc_id: uuid.UUID,
+    item_id: uuid.UUID,
+    payload: ItemUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     item = _get_item_or_404(db, poc_id, item_id)
     dados = payload.model_dump(exclude_unset=True)
     sessao_id = dados.pop("sessao_id", None)
@@ -493,6 +515,7 @@ def atualizar_item(poc_id: uuid.UUID, item_id: uuid.UUID, payload: ItemUpdate, d
     if {"resultado", "aderencia", "status"} & dados.keys():
         db.flush()
         sincronizar_resultado_catalogo(db, item, resultado_mudou=item.resultado != resultado_anterior)
+        atualizar_embedding_historico(db, item, resolve_api_key(current_user))
 
     db.commit()
     db.refresh(item)
@@ -546,6 +569,7 @@ def sobrescrever_classificacao(
     classificacao.origem = OrigemClassificacao.manual
     classificacao.justificativa = payload.justificativa
     classificacao.procedimento_id = payload.procedimento_id
+    classificacao.confirmado_por_historico = False
     classificacao.modelo = None
     if classificacao.fontes is None:
         classificacao.fontes = []
@@ -758,10 +782,6 @@ def remover_anexo(poc_id: uuid.UUID, item_id: uuid.UUID, anexo_id: uuid.UUID, db
     return item
 
 
-def _escapar_html(texto: str) -> str:
-    return texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
 @router.post("/{poc_id}/itens/{item_id}/anexos/{anexo_id}/validar", response_model=ItemOut)
 def validar_anexo(
     poc_id: uuid.UUID,
@@ -809,6 +829,7 @@ def validar_anexo(
         html=html,
         api_key=resolve_api_key(current_user),
         dono_id=current_user.id,
+        origem=OrigemConhecimento.poc,
     )
     anexo.procedimento_id = procedimento.id
     db.commit()

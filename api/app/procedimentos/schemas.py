@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models import StatusProcedimento
+from app.models import OrigemConhecimento, StatusProcedimento
 
 
 class SecaoOut(BaseModel):
@@ -22,11 +22,13 @@ class ProcedimentoListItem(BaseModel):
     categorias: list[str]
     cliente_origem: str | None
     status: StatusProcedimento
+    origem_conhecimento: OrigemConhecimento = OrigemConhecimento.manual
     versao: int
     data_origem: date | None
     created_at: datetime
     responsavel_id: uuid.UUID | None = None
     responsavel_email: str | None = None
+    criado_por_email: str | None = None
 
 
 class ProcedimentoDetail(ProcedimentoListItem):

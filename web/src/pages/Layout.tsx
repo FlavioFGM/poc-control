@@ -1,17 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { api, User } from "../api";
 import suseLogo from "../assets/suse-logo.svg";
+import { Icon } from "../Icon";
 import { useLanguage } from "../i18n";
-import { Sidebar } from "./Sidebar";
 
 type Theme = "light" | "dark";
 
-// Mesma chave que o motor do Planejar PoC já usa internamente (engine/plannerEngine.js,
-// THEME_KEY) -- os dois lados ficam em sincronia sem precisar se avisar: o motor aplica o
-// atributo data-theme na <html> uma vez, no carregamento do script (antes do React montar);
-// este botão só continua escrevendo na mesma chave/atributo depois disso.
+// Same key the poc-planner iframe (embedded on "/", see PlanPoc.tsx) reads on its own
+// load. A `storage` event never fires in the window that made the change, so toggling
+// here can't rely on it to refresh the already-open iframe -- dispatch a same-window
+// custom event instead, which PlanPoc.tsx listens for to reload the iframe.
 const THEME_KEY = "suse_poc_planner_theme";
+const THEME_EVENT = "poc-control:theme-changed";
 
 function readStoredTheme(): Theme {
   try {
@@ -36,11 +37,20 @@ function formatBuildInfo(lang: string): string {
 }
 
 export function Layout({ user, onLogout }: { user: User; onLogout: () => void }) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
+  const [accountOpen, setAccountOpen] = useState(false);
   const location = useLocation();
   const { lang, setLang, t } = useLanguage();
+  const mounted = useRef(false);
+  const accountRef = useRef<HTMLDivElement>(null);
 
+  // Only the planner's own iframe page needs the no-padding, fixed-height treatment (and skips
+  // the Gemini-key banner, which wouldn't make sense floating over an iframe that has its own
+  // full-page UI) -- "/" is the real Home page now, a normal page like any other.
+  const isPlanejador = location.pathname === "/planejar";
+  // Home's hub (hero + action tiles + 3 history cards side by side) reads cramped at the normal
+  // .page width now that the sidebar is gone -- give it more of the screen (page-wide, ~66vw)
+  // instead of widening .page globally for every other screen.
   const isHome = location.pathname === "/";
 
   useEffect(() => {
@@ -50,7 +60,18 @@ export function Layout({ user, onLogout }: { user: User; onLogout: () => void })
     } catch {
       // localStorage indisponível -- a preferência só não persiste entre sessões
     }
+    if (mounted.current) window.dispatchEvent(new Event(THEME_EVENT));
+    mounted.current = true;
   }, [theme]);
+
+  useEffect(() => {
+    if (!accountOpen) return;
+    function onClickOutside(e: MouseEvent) {
+      if (accountRef.current && !accountRef.current.contains(e.target as Node)) setAccountOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [accountOpen]);
 
   async function handleLogout() {
     await api.logout();
@@ -60,14 +81,12 @@ export function Layout({ user, onLogout }: { user: User; onLogout: () => void })
   return (
     <div className="app-shell">
       <header className="topbar">
-        <button className="hamburger" aria-label="Abrir menu" onClick={() => setSidebarOpen(true)}>
-          <span />
-          <span />
-          <span />
-        </button>
         <Link to="/" className="topbar-brand">
           <img src={suseLogo} alt="" className="navbar-logo" />
           {t("brand")}
+        </Link>
+        <Link to="/" className="theme-toggle" title={t("nav.dashboard")} aria-label={t("nav.dashboard")}>
+          <Icon name="home" />
         </Link>
         <button
           className="theme-toggle"
@@ -104,19 +123,39 @@ export function Layout({ user, onLogout }: { user: User; onLogout: () => void })
             ES
           </button>
         </div>
+        <div className="account-menu" ref={accountRef}>
+          <button className="account-toggle" onClick={() => setAccountOpen((o) => !o)}>
+            {user.email}
+          </button>
+          {accountOpen && (
+            <div className="account-dropdown">
+              <Link to="/minha-conta" onClick={() => setAccountOpen(false)}>
+                {t("nav.minhaConta")}
+              </Link>
+              {user.is_admin && (
+                <Link to="/usuarios" onClick={() => setAccountOpen(false)}>
+                  {t("nav.usuarios")}
+                </Link>
+              )}
+              <button className="btn btn-secondary" onClick={handleLogout}>
+                {t("action.sair")}
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} user={user} onLogout={handleLogout} />
-
-      <main className={isHome ? "page page-flush" : "page"}>
-        {!isHome && !user.tem_gemini_key && (
-          <p className="alert alert-warning" style={{ marginBottom: 20 }}>
-            Você está usando a chave de API do Gemini compartilhada do servidor. Cadastre a sua própria
-            chave em <Link to="/minha-conta">Minha conta</Link> para que o uso seja faturado na sua conta.
-          </p>
-        )}
-        <Outlet />
-      </main>
+      <div className="app-body">
+        <main className={isPlanejador ? "page page-flush" : isHome ? "page page-wide" : "page"}>
+          {!isPlanejador && !user.tem_gemini_key && (
+            <p className="alert alert-warning" style={{ marginBottom: 20 }}>
+              {t("layout.chaveCompartilhadaAntes")} <Link to="/minha-conta">{t("nav.minhaConta")}</Link>{" "}
+              {t("layout.chaveCompartilhadaDepois")}
+            </p>
+          )}
+          <Outlet />
+        </main>
+      </div>
 
       <span className="build-info" title={__APP_BUILD_TIME__}>
         {formatBuildInfo(lang)}

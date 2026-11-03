@@ -1,6 +1,6 @@
 # Running POC Control from the published images
 
-Source: [github.com/gbrlins/poc-control](https://github.com/gbrlins/poc-control) — this file
+Source: [github.com/FlavioFGM/suse-poc-toolkit/poc-control](https://github.com/FlavioFGM/suse-poc-toolkit/tree/main/poc-control) — this file
 covers running it from the prebuilt images on Docker Hub, without cloning or building anything.
 
 POC Control is a personal tool for a Solutions Architect to run customer proofs-of-concept:
@@ -50,8 +50,11 @@ services:
       SESSION_SECRET: ${SESSION_SECRET}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
     volumes:
-      - ./seed:/app/seed:ro
-      - ./uploads:/app/uploads
+      # :Z relabels these for the container's SELinux context -- needed on SELinux-enforcing
+      # hosts (e.g. SLES), otherwise the api container gets a plain PermissionError writing
+      # under uploads/ even running as root. Harmless no-op on hosts without SELinux.
+      - ./seed:/app/seed:ro,Z
+      - ./uploads:/app/uploads:Z
     depends_on:
       db:
         condition: service_healthy
@@ -119,6 +122,18 @@ hash and login fails with no obvious error. Escape every `$` as `$$` before past
 ADMIN_PASSWORD_HASH=$$argon2id$$v=19$$m=65536,t=3,p=4$$<salt>$$<hash>
 ```
 
+**This `$$` escaping is a real-Docker-Compose-only quirk.** `podman-compose` (used on e.g. a SLES
+deployment) does **not** interpolate `.env` values at all — doubling the `$` there leaves a
+literal `$$` in the container's environment, which is just as broken as the unescaped version,
+for the opposite reason. On podman-compose, paste the hash exactly as `hash_password.py` printed
+it, single `$` and all. Whichever engine you're on, verify once with:
+
+```sh
+podman exec <api-container> printenv ADMIN_PASSWORD_HASH   # or: docker compose exec api printenv ADMIN_PASSWORD_HASH
+```
+
+and confirm it matches the hash you generated, before assuming login will work.
+
 ## 4. Run it
 
 ```sh
@@ -138,6 +153,6 @@ docker compose up -d
 
 ## Full documentation
 
-The [GitHub repo](https://github.com/gbrlins/poc-control) has the full feature list, data model,
+The [GitHub repo](https://github.com/FlavioFGM/suse-poc-toolkit/tree/main/poc-control) has the full feature list, data model,
 and architecture notes (`README.md`), and the day-to-day engineering/product context
 (`CLAUDE.md`).

@@ -1,31 +1,63 @@
 :root {
-  --color-bg: #f2f5f3;
-  --color-surface: #ffffff;
-  --color-border: #d7e1dc;
-  --color-text: #0c322c;
-  --color-text-muted: #56706a;
+  /* Primitives copied byte-for-byte from poc-planner/index.html's :root so the two apps share one
+     real palette instead of two similar-but-different greens -- these are the actual source of
+     truth now; --color-* below just routes to them so the ~1140 lines of existing var(--color-*)
+     call sites keep working untouched. */
+  --suse-dark: #0b2e2a;
+  --suse-base: #30ba78;
+  --suse-base2: #28a267;
+  --suse-light: #9fe8c6;
+  --suse-accent: #ff7a59;
+  --gray-50: #f8fafc;
+  --gray-100: #f1f5f9;
+  --gray-200: #e2e8f0;
+  --gray-300: #cbd5e1;
+  --gray-400: #94a3b8;
+  --gray-500: #64748b;
+  --gray-700: #334155;
+  --gray-800: #1e293b;
+  --gray-900: #0f172a;
+  --red-500: #ef4444;
+  --red-50: #fef2f2;
+  --orange-500: #f97316;
+  --orange-50: #fff7ed;
+  --green-600: #16a34a;
+  --green-50: #f0fdf4;
+  --blue-500: #3b82f6;
+  --blue-50: #eff6ff;
+  --purple-500: #a855f7;
+  --purple-50: #faf5ff;
+  --ink: var(--suse-dark);
+  --surface: #ffffff;
 
-  --color-pine: #0c322c;
+  --color-bg: var(--gray-50);
+  --color-surface: var(--surface);
+  --color-border: var(--gray-200);
+  --color-text: var(--gray-900);
+  --color-text-muted: var(--gray-500);
+
+  --color-pine: var(--suse-dark);
   --color-pine-hover: #124840;
-  --color-primary: #0c322c;
-  --color-primary-hover: #124840;
+  --color-primary: var(--ink);
+  --color-primary-hover: var(--suse-base2);
   --color-primary-contrast: #ffffff;
-  --color-primary-soft: #dde7e4;
+  --color-primary-soft: var(--suse-light);
 
-  --color-success: #1f9a5e;
-  --color-success-soft: #ddf3e7;
-  --color-warning: #92660a;
-  --color-warning-soft: #fbefd2;
-  --color-danger: #c2412f;
-  --color-danger-soft: #f8e0da;
-  --color-info: #2453ff;
-  --color-info-soft: #e1e8ff;
+  --color-success: var(--green-600);
+  --color-success-soft: var(--green-50);
+  --color-warning: var(--orange-500);
+  --color-warning-soft: var(--orange-50);
+  --color-danger: var(--red-500);
+  --color-danger-soft: var(--red-50);
+  --color-info: var(--blue-500);
+  --color-info-soft: var(--blue-50);
 
   --head-ink: #ffffff;
   --head-muted: #a9c7bc;
 
-  --radius: 10px;
-  --radius-sm: 6px;
+  --radius: 16px;
+  --radius-sm: 10px;
+  --radius-lg: 22px;
   --shadow: 0 1px 2px rgba(12, 50, 44, 0.05), 0 2px 8px rgba(12, 50, 44, 0.07);
 
   color-scheme: light;
@@ -39,27 +71,50 @@
    muda pra um verde mais claro aqui -- ver também o ajuste de .chip-suse abaixo, que usava
    --color-pine (pensada só pra fundo) como cor de texto. */
 :root[data-theme="dark"] {
-  --color-bg: #0b1512;
-  --color-surface: #13241f;
-  --color-border: #28392f;
-  --color-text: #eaf3ee;
-  --color-text-muted: #9bb3a9;
+  /* Same primitives as poc-planner/index.html's html[data-theme="dark"] block: only the gray
+     scale, --surface and --ink shift -- the suse-* brand colors stay put, same as the planner
+     (its header/brand icon never changes with theme either). */
+  --gray-50: #101c19;
+  --gray-100: #17251f;
+  --gray-200: #223730;
+  --gray-300: #35524a;
+  --gray-400: #7d968d;
+  --gray-500: #a2b8b0;
+  --gray-700: #d2e3dc;
+  --gray-800: #e3f0ea;
+  --gray-900: #f3faf7;
+  --red-500: #f87171;
+  --red-50: #2c1618;
+  --orange-500: #fb923c;
+  --orange-50: #2c2013;
+  --green-600: #4ade80;
+  --green-50: #122c1f;
+  --blue-500: #7fb0ff;
+  --blue-50: #122236;
+  --surface: #15241f;
+  --ink: #7eecb0;
+
+  --color-bg: var(--gray-50);
+  --color-surface: var(--surface);
+  --color-border: var(--gray-200);
+  --color-text: var(--gray-900);
+  --color-text-muted: var(--gray-500);
 
   --color-pine: #15372f;
   --color-pine-hover: #1c4339;
-  --color-primary: #2bbf7a;
+  --color-primary: var(--ink);
   --color-primary-hover: #35d58b;
   --color-primary-contrast: #06140f;
   --color-primary-soft: #1a4535;
 
-  --color-success: #3ecf87;
-  --color-success-soft: #123523;
-  --color-warning: #f0b23c;
-  --color-warning-soft: #3a2a0d;
-  --color-danger: #ef6a5a;
-  --color-danger-soft: #3a1512;
-  --color-info: #6fa1ff;
-  --color-info-soft: #12213a;
+  --color-success: var(--green-600);
+  --color-success-soft: var(--green-50);
+  --color-warning: var(--orange-500);
+  --color-warning-soft: var(--orange-50);
+  --color-danger: var(--red-500);
+  --color-danger-soft: var(--red-50);
+  --color-info: var(--blue-500);
+  --color-info-soft: var(--blue-50);
 
   --head-ink: #ffffff;
   --head-muted: #a9c7bc;
@@ -71,6 +126,19 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* Icon.tsx renders this around each ported planner SVG (same rule as poc-planner/index.html). */
+.icon {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  vertical-align: -0.15em;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 html,
@@ -115,6 +183,14 @@ h2 {
 
 .app-shell {
   min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 .topbar {
@@ -123,32 +199,11 @@ h2 {
   top: 0;
   z-index: 10;
   height: 56px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 0 16px;
-}
-
-.hamburger {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-  width: 36px;
-  height: 36px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 8px;
-  flex-shrink: 0;
-}
-
-.hamburger span {
-  display: block;
-  width: 20px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--head-ink);
 }
 
 .topbar-brand {
@@ -214,6 +269,46 @@ h2 {
   color: var(--head-ink);
 }
 
+.account-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.account-toggle {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--head-ink);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-toggle:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.account-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 160px;
+}
+
 .build-info {
   position: fixed;
   left: 10px;
@@ -229,127 +324,11 @@ h2 {
   white-space: nowrap;
 }
 
-.sidebar-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  z-index: 20;
-}
-
-.sidebar {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 260px;
-  max-width: 85vw;
-  background: var(--color-pine);
-  color: var(--head-ink);
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  transform: translateX(-100%);
-  transition: transform 0.2s ease;
-  box-shadow: 2px 0 16px rgba(0, 0, 0, 0.25);
-}
-
-.sidebar.open {
-  transform: translateX(0);
-}
-
-.sidebar-modes {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.sidebar-mode {
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: var(--head-ink);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  font-size: 14px;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-}
-
-.sidebar-mode.active {
-  background: var(--color-success);
-  border-color: var(--color-success);
-  color: #fff;
-}
-
-.sidebar-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 12px;
-  flex: 1;
-  overflow-y: auto;
-}
-
-.sidebar-link {
-  color: var(--head-muted);
-  text-decoration: none;
-  font-size: 14px;
-  font-weight: 500;
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
-}
-
-.sidebar-link:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--head-ink);
-}
-
-.sidebar-link.active {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--head-ink);
-  font-weight: 700;
-}
-
-.sidebar-nav-global {
-  flex: 0 0 auto;
-  overflow: visible;
-  margin-top: auto;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.sidebar-footer {
-  padding: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.sidebar-user {
-  font-size: 13px;
-  color: var(--head-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sidebar-footer .btn-secondary {
-  background: transparent;
-  color: var(--head-ink);
-  border-color: rgba(255, 255, 255, 0.3);
-  flex-shrink: 0;
-}
-
-.sidebar-footer .btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
 /* Page layout */
 
 .page {
+  flex: 1;
+  min-width: 0;
   max-width: 1040px;
   margin: 0 auto;
   padding: 32px 24px 64px;
@@ -360,6 +339,20 @@ h2 {
   margin: 0;
   padding: 0;
   height: calc(100vh - 56px);
+}
+
+/* Home only (Layout.tsx) -- the hub (hero + action tiles + 3 history cards side by side) reads
+   cramped at the normal 1040px .page width now that the sidebar is gone; ~66% of the viewport
+   instead of a fixed px cap so it scales with the window. Falls back near full-width on narrow
+   screens, same breakpoint as .home-actions/.home-history-grid collapsing to one column. */
+.page-wide {
+  max-width: 66vw;
+}
+
+@media (max-width: 900px) {
+  .page-wide {
+    max-width: 100%;
+  }
 }
 
 .page-header {
@@ -379,12 +372,230 @@ h2 {
   margin: -8px 0 20px;
 }
 
+/* Home hub (pages/Home.tsx): hero + action tiles + per-area recent-activity cards, modeled on
+   poc-planner/index.html's renderDashboard/renderProjectsList. */
+.home-hub {
+  width: 100%;
+}
+
+.home-hero {
+  text-align: center;
+  max-width: 640px;
+  margin: 12px auto 32px;
+}
+
+.home-hero-icon {
+  display: inline-flex;
+  padding: 16px;
+  background: var(--suse-base);
+  color: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 40px rgba(48, 186, 120, 0.3);
+  margin-bottom: 18px;
+}
+
+.home-hero-icon .icon {
+  width: 28px;
+  height: 28px;
+}
+
+.home-hero h1 {
+  font-size: 30px;
+  font-weight: 900;
+  color: var(--ink);
+  margin: 0 0 8px;
+}
+
+.home-hero .page-subtitle {
+  margin: 0;
+}
+
+.home-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+@media (max-width: 720px) {
+  .home-actions,
+  .home-history-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.home-action {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-decoration: none;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.home-action:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.home-action .icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  box-sizing: content-box;
+  color: #fff;
+}
+
+.home-action strong {
+  display: block;
+  font-size: 15px;
+}
+
+.home-action span {
+  display: block;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.home-action-primary {
+  background: var(--suse-dark);
+  color: #fff;
+  border-color: var(--suse-dark);
+  padding: 24px 22px;
+}
+
+.home-action-primary strong {
+  font-size: 16px;
+}
+
+.home-action-primary span {
+  color: var(--suse-light);
+}
+
+.home-action-primary .icon {
+  background: rgba(255, 255, 255, 0.15);
+  width: 30px;
+  height: 30px;
+}
+
+.home-action-rfi .icon {
+  background: var(--suse-accent);
+}
+
+.home-action-procedimentos .icon {
+  background: var(--purple-500);
+}
+
+.home-history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.home-drafts-desc {
+  font-size: 12px;
+  margin: -4px 0 10px;
+}
+
+.home-history-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.home-history-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 900;
+  margin: 0 0 10px;
+}
+
+.history-search {
+  font-size: 12.5px;
+  padding: 7px 10px;
+  margin-bottom: 4px;
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--color-border);
+  text-decoration: none;
+  color: inherit;
+}
+
+.history-row .icon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.history-row-button {
+  width: 100%;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  border-radius: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-row-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.history-row-sub {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.history-row-all {
+  display: block;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 700;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.poc-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.poc-filtros input,
+.poc-filtros select {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-text);
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
 /* Card */
 
 .card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   padding: 24px;
 }
@@ -679,6 +890,19 @@ textarea.input {
 .chip-lateral {
   border: 1px dashed var(--color-warning);
   color: var(--color-warning);
+}
+
+/* Origin tag on a knowledge-base entry (Procedimentos) -- colors mirror Home's tile coding. */
+.chip-origem-poc {
+  border: 1px solid var(--blue-500);
+  color: var(--blue-500);
+  border-style: solid;
+}
+
+.chip-origem-rfi {
+  border: 1px solid var(--suse-accent);
+  color: var(--suse-accent);
+  border-style: solid;
 }
 
 /* Chips clicáveis de filtro por categoria (Procedimentos) e de seleção em formulário (upload) */
@@ -1005,6 +1229,15 @@ textarea.input {
 .empty-state {
   color: var(--color-text-muted);
   padding: 24px 0;
+}
+
+/* .card already has its own 24px all-around padding; .empty-state's 24px-vertical-only rule
+   below it in the cascade was zeroing out the sides whenever both classes land on the same
+   element (every "nothing here yet" card: PoCs, Procedimentos, RFIs, sessions...), pushing the
+   text flush against the edge. This restores symmetric padding for that specific combination
+   without touching .empty-state's many other standalone (span/p, no .card) usages. */
+.card.empty-state {
+  padding: 24px;
 }
 
 .muted {

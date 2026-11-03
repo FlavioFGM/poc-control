@@ -38,6 +38,8 @@ export interface UsuarioListItem {
   tem_gemini_key: boolean;
 }
 
+export type OrigemConhecimento = "manual" | "poc" | "rfi";
+
 export interface ProcedimentoListItem {
   id: string;
   titulo: string;
@@ -45,11 +47,13 @@ export interface ProcedimentoListItem {
   categorias: string[];
   cliente_origem: string | null;
   status: "rascunho" | "validado";
+  origem_conhecimento: OrigemConhecimento;
   versao: number;
   data_origem: string | null;
   created_at: string;
   responsavel_id: string | null;
   responsavel_email: string | null;
+  criado_por_email: string | null;
 }
 
 export interface Secao {
@@ -80,6 +84,8 @@ export interface PocListItem {
   itens_concluidos: number;
   responsavel_id: string | null;
   responsavel_email: string | null;
+  criado_por_email: string | null;
+  produtos: string[];
 }
 
 export interface Fase {
@@ -107,6 +113,7 @@ export interface Classificacao {
   justificativa: string | null;
   fontes: Fonte[];
   procedimento_id: string | null;
+  confirmado_por_historico: boolean;
   modelo: string | null;
   created_at: string;
 }
@@ -165,6 +172,7 @@ export interface ItemPoc {
   conducao: CondicaoItem | null;
   status: StatusItem;
   ordem: number;
+  catalogo_id: string | null;
   classificacao: Classificacao | null;
   notas: Nota[];
   anexos: Anexo[];
@@ -229,8 +237,18 @@ export interface ItemUpdatePayload {
 
 export type VeredictoRfi = "atende" | "atende_parcial" | "nao_atende" | "sem_evidencia";
 
+export interface RfiDocumentoOut {
+  id: string;
+  nome_arquivo: string;
+  created_at: string;
+  total_itens: number;
+  itens_manuais: number;
+}
+
 export interface RfiItemOut {
   id: string;
+  documento_id: string | null;
+  etapa: string | null;
   codigo: string;
   categoria: string | null;
   categoria_codigo: string | null;
@@ -241,6 +259,7 @@ export interface RfiItemOut {
   fontes: Fonte[];
   origem: OrigemClassificacao | null;
   procedimento_id: string | null;
+  confirmado_por_historico: boolean;
   modelo: string | null;
   created_at: string;
 }
@@ -253,6 +272,9 @@ export interface RfiListItem {
   status_extracao: StatusExtracao;
   criado_por_email: string;
   created_at: string;
+  processamento_iniciado_em: string | null;
+  progresso: { fase: "lendo" | "avaliando" | "reavaliando"; atual: number; total: number; nome: string } | null;
+  cancelamento_solicitado: boolean;
   total_itens: number;
   itens_avaliados: number;
   responsavel_id: string | null;
@@ -262,7 +284,7 @@ export interface RfiListItem {
 export interface RfiDetail extends RfiListItem {
   erro_extracao: string | null;
   modelo_extracao: string | null;
-  nome_arquivo: string;
+  documentos: RfiDocumentoOut[];
   itens: RfiItemOut[];
 }
 
@@ -397,6 +419,14 @@ export const api = {
   listarRfis: () => request<RfiListItem[]>("/api/rfis"),
   obterRfi: (id: string) => request<RfiDetail>(`/api/rfis/${id}`),
   criarRfi: (form: FormData) => request<RfiListItem>("/api/rfis", { method: "POST", body: form }),
+  adicionarDocumentosRfi: (rfiId: string, form: FormData) =>
+    request<RfiListItem>(`/api/rfis/${rfiId}/documentos`, { method: "POST", body: form }),
+  removerDocumentoRfi: (rfiId: string, documentoId: string) =>
+    request<void>(`/api/rfis/${rfiId}/documentos/${documentoId}`, { method: "DELETE" }),
+  cancelarRfi: (rfiId: string) => request<RfiListItem>(`/api/rfis/${rfiId}/cancelar`, { method: "POST" }),
+  reavaliarRfi: (rfiId: string, incluirManuais: boolean, somentePendentes = false) =>
+    request<RfiListItem>(
+      `/api/rfis/${rfiId}/reavaliar?incluir_manuais=${incluirManuais}&somente_pendentes=${somentePendentes}`, { method: "POST" }),
   sobrescreverVeredictoRfi: (rfiId: string, itemId: string, payload: RfiItemManualPayload) =>
     request<RfiItemOut>(`/api/rfis/${rfiId}/itens/${itemId}`, {
       method: "PATCH",
@@ -404,6 +434,8 @@ export const api = {
     }),
   reavaliarItemRfi: (rfiId: string, itemId: string) =>
     request<RfiItemOut>(`/api/rfis/${rfiId}/itens/${itemId}/reavaliar`, { method: "POST" }),
+  promoverItemRfi: (rfiId: string, itemId: string) =>
+    request<RfiItemOut>(`/api/rfis/${rfiId}/itens/${itemId}/promover`, { method: "POST" }),
   urlExportarRfi: (rfiId: string) => `/api/rfis/${rfiId}/export`,
   urlExportarRfiXlsx: (rfiId: string) => `/api/rfis/${rfiId}/export.xlsx`,
 

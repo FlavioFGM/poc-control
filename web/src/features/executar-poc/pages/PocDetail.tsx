@@ -14,7 +14,10 @@ import {
 } from "@/api";
 import { CODIGOS_CATEGORIA, rotuloCategoria } from "@/categorias";
 import { DangerZone } from "@/components/DangerZone";
+import { HtmlFrame } from "@/HtmlFrame";
 import { useLanguage } from "@/i18n";
+import { toggleInSet } from "@/toggleInSet";
+import { formatElapsed, useElapsedSeconds } from "@/useElapsedSeconds";
 
 const TAB_IDS = ["pre", "plano", "resumo", "andamento", "apresentacao"] as const;
 type TabId = (typeof TAB_IDS)[number];
@@ -78,7 +81,6 @@ export function PocDetail() {
   const [reextraindo, setReextraindo] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const pollRef = useRef<number | null>(null);
-  const pollLoteRef = useRef<number | null>(null);
 
   useEffect(() => {
     api.listarProcedimentos().then(setProcedimentos).catch(() => {});
@@ -90,7 +92,14 @@ export function PocDetail() {
       .obterPoc(id)
       .then((data) => {
         setPoc(data);
-        if (data.status_extracao === "extraindo") {
+        // Mesma condição unificada do RfiDetail.tsx: continua reconsultando enquanto a
+        // extração roda OU enquanto sobrar item sem classificação -- cobre tanto a
+        // classificação automática pós-extração quanto um reprocessamento manual, sem precisar
+        // de um segundo loop de poll. Itens vindos do planejador (catalogo_id) nunca recebem
+        // classificação -- usam `resultado`, não semáforo -- e não devem travar o poll num loop
+        // infinito.
+        const faltaClassificar = data.itens.some((i) => !i.classificacao && !i.catalogo_id);
+        if (data.status_extracao === "extraindo" || faltaClassificar) {
           pollRef.current = window.setTimeout(carregar, 3000);
         }
       })
@@ -101,7 +110,6 @@ export function PocDetail() {
     carregar();
     return () => {
       if (pollRef.current) window.clearTimeout(pollRef.current);
-      if (pollLoteRef.current) window.clearTimeout(pollLoteRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -113,20 +121,12 @@ export function PocDetail() {
   async function classificarPendentes() {
     if (!id) return;
     setClassificandoLote(true);
-    await api.classificarPendentes(id);
-
-    function poll() {
-      api.obterPoc(id!).then((data) => {
-        setPoc(data);
-        const faltam = data.itens.some((i) => !i.classificacao);
-        if (faltam) {
-          pollLoteRef.current = window.setTimeout(poll, 4000);
-        } else {
-          setClassificandoLote(false);
-        }
-      });
+    try {
+      await api.classificarPendentes(id);
+      carregar();
+    } finally {
+      setClassificandoLote(false);
     }
-    pollLoteRef.current = window.setTimeout(poll, 4000);
   }
 
   function handleItemRemovido(itemId: string) {
@@ -140,12 +140,7 @@ export function PocDetail() {
   }
 
   function toggleSelecionado(itemId: string) {
-    setSelecionados((atual) => {
-      const novo = new Set(atual);
-      if (novo.has(itemId)) novo.delete(itemId);
-      else novo.add(itemId);
-      return novo;
-    });
+    setSelecionados((atual) => toggleInSet(atual, itemId));
   }
 
   function abrirRoteiro() {
@@ -185,8 +180,15 @@ export function PocDetail() {
     );
   }
 
+  const elapsedSeconds = useElapsedSeconds(
+    poc && poc.status_extracao === "extraindo" ? poc.created_at : undefined,
+  );
+
   if (erro) return <p className="alert alert-error">{erro}</p>;
   if (!poc) return <p className="muted">{t("common.carregando")}</p>;
+
+  const faltaClassificar = poc.itens.some((i) => !i.classificacao && !i.catalogo_id);
+  const aindaProcessando = poc.status_extracao === "extraindo" || faltaClassificar;
 
   const totalConcluido = poc.itens.filter((i) => i.status === "concluido").length;
   const porFase = new Map<number, ItemPoc[]>();
@@ -253,7 +255,11 @@ export function PocDetail() {
         )}
       </div>
 
-      {poc.status_extracao === "extraindo" && <p className="alert alert-success">{t("pocDetail.extraindo")}</p>}
+      {poc.status_extracao === "extraindo" && (
+        <p className="alert alert-success">
+          {t("pocDetail.extraindo").replace("{tempo}", formatElapsed(elapsedSeconds))}
+        </p>
+      )}
       {poc.status_extracao === "pronto" && poc.modelo_extracao && (
         <p className="muted" style={{ fontSize: 13 }}>
           {t("pocDetail.extraidoCom").replace("{modelo}", poc.modelo_extracao)}
@@ -335,6 +341,7 @@ export function PocDetail() {
                     procedimentos={procedimentos}
                     sessoes={poc.sessoes}
                     selecionado={selecionados.has(item.id)}
+                    aindaProcessando={aindaProcessando}
                     onToggleSelecionado={() => toggleSelecionado(item.id)}
                     onAtualizado={handleItemAtualizado}
                     onRemovido={handleItemRemovido}
@@ -929,10 +936,9 @@ function ProcedimentoFullscreen({ procedimentoId, onClose }: { procedimentoId: s
         </button>
       </div>
       {procedimento && (
-        <iframe
+        <HtmlFrame
+          html={procedimento.html_original}
           title={procedimento.titulo}
-          sandbox="allow-same-origin"
-          srcDoc={procedimento.html_original}
           className="html-frame html-frame-fullscreen"
         />
       )}
@@ -946,6 +952,7 @@ function ItemRow({
   procedimentos,
   sessoes,
   selecionado,
+  aindaProcessando,
   onToggleSelecionado,
   onAtualizado,
   onRemovido,
@@ -955,6 +962,7 @@ function ItemRow({
   procedimentos: ProcedimentoListItem[];
   sessoes: Sessao[];
   selecionado: boolean;
+  aindaProcessando: boolean;
   onToggleSelecionado: () => void;
   onAtualizado: (item: ItemPoc) => void;
   onRemovido: (itemId: string) => void;
@@ -1173,7 +1181,11 @@ function ItemRow({
         </button>
         {item.conducao && <span className={`chip chip-${item.conducao}`}>{CONDUCAO_LABEL[item.conducao]}</span>}
         <span className={`badge badge-${item.classificacao?.flag ?? "muted"}`}>
-          {item.classificacao ? FLAG_LABEL[item.classificacao.flag] : t("itemRow.semSemaforo")}
+          {item.classificacao
+            ? FLAG_LABEL[item.classificacao.flag]
+            : aindaProcessando && !item.catalogo_id
+              ? t("itemRow.processando")
+              : t("itemRow.semSemaforo")}
         </span>
         <span className={`badge badge-${item.status}`}>{STATUS_LABEL[item.status]}</span>
       </div>
@@ -1412,6 +1424,11 @@ function ItemRow({
                   )}
                 </div>
                 {item.classificacao.justificativa && <p style={{ marginTop: 6 }}>{item.classificacao.justificativa}</p>}
+                {item.classificacao.confirmado_por_historico && (
+                  <p style={{ marginTop: 6 }}>
+                    <span className="badge badge-muted">{t("itemRow.confirmadoHistorico")}</span>
+                  </p>
+                )}
                 {item.classificacao.fontes.length > 0 && (
                   <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
                     {item.classificacao.fontes.map((f, i) => (

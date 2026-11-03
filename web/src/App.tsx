@@ -5,6 +5,7 @@ import { AuthProvider } from "./auth";
 import { LanguageProvider } from "./i18n";
 import { Login } from "./pages/Login";
 import { Layout } from "./pages/Layout";
+import { Home } from "./pages/Home";
 import { Usuarios } from "./pages/Usuarios";
 import { MinhaConta } from "./pages/MinhaConta";
 import { Procedimentos } from "./features/executar-poc/pages/Procedimentos";
@@ -40,7 +41,8 @@ export function App() {
         <AuthProvider user={user}>
           <Routes>
             <Route element={<Layout user={user} onLogout={() => setUser(null)} />}>
-              <Route index element={<PlanPoc />} />
+              <Route index element={<Home />} />
+              <Route path="planejar" element={<PlanPoc />} />
               <Route path="procedimentos" element={<Procedimentos />} />
               <Route path="procedimentos/novo" element={<ProcedimentoUpload />} />
               <Route path="procedimentos/:id" element={<ProcedimentoView />} />

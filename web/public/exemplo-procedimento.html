@@ -1,0 +1,466 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}</style><style>:root{color-scheme:light dark;--md-bg:#fff;--md-text:rgba(0,0,0,.8);--md-muted:rgba(0,0,0,.6);--md-fill:rgba(0,0,0,.04);--md-fill-strong:rgba(0,0,0,.06);--md-rule:rgba(0,0,0,.1);--md-rule-strong:rgba(0,0,0,.16);--md-link:hsl(210 100% 45%)}@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--md-bg:#0d0d0d;--md-text:rgba(255,255,255,.85);--md-muted:rgba(255,255,255,.6);--md-fill:rgba(255,255,255,.06);--md-fill-strong:rgba(255,255,255,.09);--md-rule:rgba(255,255,255,.14);--md-rule-strong:rgba(255,255,255,.22);--md-link:hsl(210 100% 72%)}}:root[data-theme="dark"]{color-scheme:dark;--md-bg:#0d0d0d;--md-text:rgba(255,255,255,.85);--md-muted:rgba(255,255,255,.6);--md-fill:rgba(255,255,255,.06);--md-fill-strong:rgba(255,255,255,.09);--md-rule:rgba(255,255,255,.14);--md-rule-strong:rgba(255,255,255,.22);--md-link:hsl(210 100% 72%)}:root[data-theme="light"]{color-scheme:light}@media print{:root,:root[data-theme="dark"]{color-scheme:light;--md-bg:#fff;--md-text:rgba(0,0,0,.8);--md-muted:rgba(0,0,0,.6);--md-fill:rgba(0,0,0,.04);--md-fill-strong:rgba(0,0,0,.06);--md-rule:rgba(0,0,0,.1);--md-rule-strong:rgba(0,0,0,.16);--md-link:hsl(210 100% 45%)}}body{background:var(--md-bg);color:var(--md-text);max-width:720px;margin:0 auto;padding:32px;display:flex;flex-direction:column;gap:10px;font:14px/1.55 -apple-system,BlinkMacSystemFont,'SF Pro','Segoe UI',sans-serif;overflow-wrap:break-word}body>:first-child{margin-top:0}h1,h2,h3,h4,h5,h6{margin:6px 0 0;line-height:1.25;font-weight:600;text-wrap:balance}h1{font-size:1.35em}h2{font-size:1.15em;color:var(--md-muted)}h3,h4,h5,h6{font-size:1em}p,ul,ol,blockquote,table,pre,hr{margin:0}strong{font-weight:600}a{color:var(--md-link);text-decoration:none}a:hover{text-decoration:underline}ul,ol{display:flex;flex-direction:column;gap:6px;padding-left:22px}ul{list-style:disc}ol{list-style:decimal}:is(li,td,th)>*+:is(p,ul,ol,blockquote){margin-top:6px}blockquote{display:flex;flex-direction:column;gap:10px;border-left:2px solid var(--md-rule);padding-left:10px;color:var(--md-muted)}:not(pre)>code{background:var(--md-fill);padding:1px 3px;border-radius:4px;font:.92em 'SF Mono',ui-monospace,Menlo,Consolas,monospace}a>code{background:none;color:inherit}pre{background:var(--md-fill);padding:10px 12px;border-radius:6px;overflow-x:auto;font:12px/1.5 'SF Mono',ui-monospace,Menlo,Consolas,monospace;margin-block:4px}pre code{background:none;padding:0;font:inherit}table{width:100%;border-collapse:separate;border-spacing:2px;font:inherit}th,td{padding:6px 8px;border-radius:3px;text-align:left;vertical-align:top}th{background:var(--md-fill-strong);font-weight:600}td{background:var(--md-fill)}:is(th,td) :not(pre)>code{background:transparent}hr{border:0;border-top:1px solid var(--md-rule-strong);margin-block:10px}img{max-width:100%;height:auto;border-radius:4px}</style>
+</head><body>
+<h1>HPA em um nginx no k3s, com acesso por Ingress (<code>&lt;HOST_APLICACAO&gt;</code>)</h1>
+<p>Objetivo: criar um nginx simples pela UI do Rancher (Deployment com Service NodePort), escalar com um <strong>HPA</strong> sob carga, e acessá-lo por <strong>Ingress</strong> com o nome <code>&lt;HOST_APLICACAO&gt;</code>.</p>
+<p>Fluxo: <strong>1 Pré-requisitos → 2 Deployment e Service (UI) → 3 HPA → 4 Carga e observação → 5 Ingress (bônus)</strong>.</p>
+<p>Convenções: arquivos são criados no <strong>editor</strong> (<code>vi</code>), e os comandos do k3s rodam no nó como <code>root</code>. Onde aparece <code>&lt;...&gt;</code>, troque pelo valor real.</p>
+<h2>Valores desta sessão</h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Valor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IP do nó do k3s</td>
+<td><code>&lt;IP_NODE_K3S&gt;</code></td>
+</tr>
+<tr>
+<td>Namespace</td>
+<td><code>hpa-teste</code> (sugestão)</td>
+</tr>
+<tr>
+<td>Nome do Deployment</td>
+<td><code>nginx-hpa</code> (sugestão)</td>
+</tr>
+<tr>
+<td>Imagem</td>
+<td><code>&lt;REGISTRY_QUAY&gt;/nginx:latest</code> (a do Quay, já validada), ou <code>nginx:latest</code></td>
+</tr>
+<tr>
+<td>Nome para o Ingress</td>
+<td><code>&lt;HOST_APLICACAO&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<h2>O que ressaltar</h2>
+<table>
+<thead>
+<tr>
+<th>Ponto</th>
+<th>Por que importa</th>
+<th>Como tratar</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>requests</code> de CPU</strong></td>
+<td>O HPA calcula a utilização como uso dividido pelo <code>request</code>. Sem ele, o alvo fica <code>&lt;unknown&gt;</code> e nada escala</td>
+<td>Preencher a reserva de CPU no passo 2</td>
+</tr>
+<tr>
+<td><strong>Metrics Server</strong></td>
+<td>O HPA lê as métricas dele</td>
+<td>Conferir no passo 1</td>
+</tr>
+<tr>
+<td><strong>Porta da imagem</strong></td>
+<td>O nginx oficial escuta na <code>80</code>; a variante <em>unprivileged</em> escuta na <code>8080</code></td>
+<td>Confirmar a porta da imagem do Quay</td>
+</tr>
+<tr>
+<td><strong>Escalonamento para baixo é lento</strong></td>
+<td>O padrão espera cerca de 5 minutos antes de reduzir</td>
+<td>Esperado. O HPA do passo 3 encurta para 1 minuto, só para a demonstração</td>
+</tr>
+<tr>
+<td><strong>DNS do nome</strong></td>
+<td>O nome <code>&lt;HOST_APLICACAO&gt;</code> precisa de um registro apontando para o nó</td>
+<td>Pedir ao admin de DNS. Enquanto isso, testar com o cabeçalho <code>Host</code></td>
+</tr>
+<tr>
+<td><strong>Controlador de Ingress</strong></td>
+<td>Sem ele, o objeto Ingress existe mas ninguém o atende</td>
+<td>Conferir no passo 1</td>
+</tr>
+</tbody>
+</table>
+<h2>1. Pré-requisitos — no nó do k3s</h2>
+<p><strong>Métricas:</strong></p>
+<pre><code class="language-bash">kubectl get apiservice v1beta1.metrics.k8s.io
+kubectl top nodes
+</code></pre>
+<p><strong>Esperado:</strong> o <code>apiservice</code> com <code>AVAILABLE</code> igual a <code>True</code>, e o <code>top nodes</code> mostrando CPU e memória do nó. Se o <code>top</code> der erro, o metrics-server não está disponível, e o HPA não funcionará.</p>
+<p><strong>Controlador de Ingress</strong> (para o passo 5):</p>
+<pre><code class="language-bash">kubectl get ingressclass
+kubectl -n kube-system get svc | grep -i traefik
+</code></pre>
+<p><strong>Esperado:</strong> uma IngressClass <code>traefik</code> e um Service <code>traefik</code> do tipo <code>LoadBalancer</code>, com <code>EXTERNAL-IP</code> igual ao IP do nó e as portas <code>80</code> e <code>443</code>. Se não houver nenhuma IngressClass, o cluster não tem controlador de Ingress, e o passo 5 precisa de um (veja a última tabela).</p>
+<h2>2. Deployment e Service — pela UI do Rancher</h2>
+<p><strong>☰ → o seu cluster → Workloads → Deployments → Create.</strong> Preencha (os nomes dos campos variam um pouco entre versões do Rancher):</p>
+<table>
+<thead>
+<tr>
+<th>Campo</th>
+<th>Valor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Namespace</td>
+<td>Crie um novo: <code>hpa-teste</code></td>
+</tr>
+<tr>
+<td>Name</td>
+<td><code>nginx-hpa</code></td>
+</tr>
+<tr>
+<td>Replicas</td>
+<td><code>1</code></td>
+</tr>
+<tr>
+<td>Container Image</td>
+<td>A imagem da tabela de valores</td>
+</tr>
+<tr>
+<td>Ports (Add Port or Service)</td>
+<td>Service Type <strong>NodePort</strong>, Private Container Port <strong>80</strong>, nome <code>http</code></td>
+</tr>
+<tr>
+<td>CPU Reservation</td>
+<td><strong><code>50</code></strong> mCPU (é o <code>requests.cpu</code>)</td>
+</tr>
+<tr>
+<td>Memory Reservation</td>
+<td><code>64</code> MiB</td>
+</tr>
+<tr>
+<td>CPU Limit</td>
+<td><code>200</code> mCPU</td>
+</tr>
+<tr>
+<td>Memory Limit</td>
+<td><code>128</code> MiB</td>
+</tr>
+</tbody>
+</table>
+<p>O ponto crítico é a <strong>reserva de CPU</strong>: ela vira o <code>request</code>, que o HPA usa como base. Clique em <strong>Create</strong>.</p>
+<p><strong>Conferir:</strong></p>
+<pre><code class="language-bash">kubectl get deploy,pods,svc -n hpa-teste
+kubectl get deploy nginx-hpa -n hpa-teste -o jsonpath=&#39;{.spec.template.spec.containers[0].resources}&#39;; echo
+</code></pre>
+<p><strong>Esperado:</strong> o pod <code>Running</code>, um Service <code>NodePort</code> com uma porta do tipo <code>80:3xxxx/TCP</code>, e os <code>resources</code> mostrando <code>requests</code> com <code>cpu: 50m</code>. <strong>Anote o nome do Service e a porta <code>3xxxx</code></strong> (o NodePort), que os próximos passos usam.</p>
+<p>Teste o acesso direto, trocando <code>&lt;NODEPORT&gt;</code>:</p>
+<pre><code class="language-bash">curl -s -o /dev/null -w &#34;HTTP %{http_code}\n&#34; http://127.0.0.1:&lt;NODEPORT&gt;/
+</code></pre>
+<p><strong>Esperado:</strong> <code>HTTP 200</code>.</p>
+<p><strong>Se preferir criar pelo editor:</strong> abra <code>vi /tmp/nginx-hpa.yaml</code>, cole o conteúdo abaixo, salve e rode <code>kubectl apply -f /tmp/nginx-hpa.yaml</code>. Ele equivale ao que o formulário cria:</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Namespace
+metadata:
+  name: hpa-teste
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-hpa
+  namespace: hpa-teste
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-hpa
+  template:
+    metadata:
+      labels:
+        app: nginx-hpa
+    spec:
+      containers:
+      - name: nginx
+        image: &lt;REGISTRY_QUAY&gt;/nginx:latest
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-hpa
+  namespace: hpa-teste
+spec:
+  type: NodePort
+  selector:
+    app: nginx-hpa
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+</code></pre>
+<h2>3. HPA</h2>
+<p>Abra o arquivo:</p>
+<pre><code class="language-bash">vi /tmp/hpa.yaml
+</code></pre>
+<p>Cole este conteúdo e salve:</p>
+<pre><code class="language-yaml">apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-hpa
+  namespace: hpa-teste
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-hpa
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+</code></pre>
+<p>O que cada parte faz:</p>
+<table>
+<thead>
+<tr>
+<th>Campo</th>
+<th>Efeito</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scaleTargetRef</code></td>
+<td>O Deployment que será escalado. O nome precisa ser igual ao do Deployment</td>
+</tr>
+<tr>
+<td><code>minReplicas</code> e <code>maxReplicas</code></td>
+<td>De 1 a 5 réplicas. O máximo precisa caber no nó (5 × 50m de CPU)</td>
+</tr>
+<tr>
+<td><code>averageUtilization: 50</code></td>
+<td>Escala quando o uso médio passa de 50% do <code>request</code> (ou seja, de 25m por pod)</td>
+</tr>
+<tr>
+<td><code>behavior.scaleDown</code></td>
+<td>Reduz a espera de 5 minutos para 1, <strong>só para a demonstração</strong>. Em produção, mantenha o padrão</td>
+</tr>
+</tbody>
+</table>
+<p>Aplique e confira:</p>
+<pre><code class="language-bash">kubectl apply -f /tmp/hpa.yaml
+kubectl get hpa -n hpa-teste
+</code></pre>
+<p><strong>Esperado:</strong> nos primeiros 15 a 30 segundos o alvo aparece como <code>&lt;unknown&gt;/50%</code>. Depois, algo como <code>1%/50%</code>, com <code>REPLICAS</code> igual a <code>1</code>.</p>
+<p>Se o alvo continuar <code>&lt;unknown&gt;</code>, veja o motivo:</p>
+<pre><code class="language-bash">kubectl describe hpa nginx-hpa -n hpa-teste
+</code></pre>
+<p>(As causas estão na tabela do final.) Pela UI do Rancher, o HPA também aparece em <strong>Workloads → HorizontalPodAutoscalers</strong>.</p>
+<h2>4. Carga e observação</h2>
+<p>Abra <strong>dois terminais</strong> no nó. No primeiro, acompanhe:</p>
+<pre><code class="language-bash">kubectl get hpa -n hpa-teste -w
+</code></pre>
+<p>No segundo, gere carga. O comando inicia 20 loops em paralelo e cada um <strong>para sozinho depois de 240 segundos</strong>. Troque <code>&lt;NODEPORT&gt;</code>:</p>
+<pre><code class="language-bash">for i in $(seq 1 20); do timeout 240 sh -c &#39;while true; do curl -s -o /dev/null http://127.0.0.1:&lt;NODEPORT&gt;/; done&#39; &amp; done
+</code></pre>
+<p>Num terceiro terminal (ou depois), veja os pods e o uso:</p>
+<pre><code class="language-bash">kubectl get pods -n hpa-teste
+kubectl top pods -n hpa-teste
+</code></pre>
+<p><strong>Esperado:</strong></p>
+<ol>
+<li>O alvo sobe acima de <code>50%</code> em cerca de 30 a 60 segundos.</li>
+<li>As <code>REPLICAS</code> aumentam (2, 3, até no máximo 5).</li>
+<li>Passados os 240 segundos, a carga para, o alvo cai, e depois de cerca de 1 minuto as réplicas voltam a <code>1</code>.</li>
+</ol>
+<p><strong>Evidência:</strong> os eventos do HPA mostram cada decisão, com o motivo:</p>
+<pre><code class="language-bash">kubectl describe hpa nginx-hpa -n hpa-teste
+</code></pre>
+<p>Procure linhas <code>SuccessfulRescale</code> com a mensagem &quot;above target&quot; (subida) e &quot;All metrics below target&quot; (descida).</p>
+<p>Se o HPA não escalar, o nginx pode estar servindo tão rápido que o uso não passa de 25m por pod. Aumente os loops (troque <code>20</code> por <code>50</code>) ou reduza a reserva de CPU para <code>20</code> mCPU, e reaplique.</p>
+<h2>5. Ingress — bônus, <code>&lt;HOST_APLICACAO&gt;</code></h2>
+<h3>5.1 O que você precisa</h3>
+<table>
+<thead>
+<tr>
+<th>Requisito</th>
+<th>O que fazer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Controlador de Ingress</td>
+<td>Passo 1: IngressClass <code>traefik</code></td>
+</tr>
+<tr>
+<td><strong>Registro DNS</strong></td>
+<td>O admin de DNS cria <code>&lt;HOST_APLICACAO&gt;</code> (tipo A) apontando para <code>&lt;IP_NODE_K3S&gt;</code>. O Traefik escuta nas portas 80 e 443 do nó</td>
+</tr>
+<tr>
+<td><strong>Firewall</strong></td>
+<td>Liberar os clientes (navegadores) até <code>&lt;IP_NODE_K3S&gt;</code>, portas 80 e 443</td>
+</tr>
+<tr>
+<td>Certificado, para HTTPS</td>
+<td>Opcional (5.4). Sem ele, o Traefik usa um certificado próprio e o navegador avisa</td>
+</tr>
+</tbody>
+</table>
+<h3>5.2 Criar o Ingress</h3>
+<p>Confirme o nome do Service e a porta dele (a primeira, antes dos <code>:</code>):</p>
+<pre><code class="language-bash">kubectl get svc -n hpa-teste
+</code></pre>
+<p>Abra o arquivo:</p>
+<pre><code class="language-bash">vi /tmp/ingress.yaml
+</code></pre>
+<p>Cole este conteúdo e salve (troque o nome do Service e a porta, se forem diferentes):</p>
+<pre><code class="language-yaml">apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-hpa
+  namespace: hpa-teste
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: &lt;HOST_APLICACAO&gt;
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-hpa
+            port:
+              number: 80
+</code></pre>
+<pre><code class="language-bash">kubectl apply -f /tmp/ingress.yaml
+kubectl get ingress -n hpa-teste
+</code></pre>
+<p><strong>Esperado:</strong> o Ingress listado com o <code>HOST</code> <code>&lt;HOST_APLICACAO&gt;</code> e o <code>ADDRESS</code> igual ao IP do nó.</p>
+<h3>5.3 Testar</h3>
+<p><strong>Antes do DNS existir</strong>, envie o nome no cabeçalho <code>Host</code>, no próprio nó:</p>
+<pre><code class="language-bash">curl -i -H &#34;Host: &lt;HOST_APLICACAO&gt;&#34; http://&lt;IP_NODE_K3S&gt;/
+</code></pre>
+<p><strong>Esperado:</strong> <code>HTTP/1.1 200 OK</code> e o HTML &quot;Welcome to nginx!&quot;.</p>
+<p>Para abrir no navegador sem DNS, acrescente uma linha ao arquivo <code>hosts</code> da sua máquina (no Windows, <code>C:\Windows\System32\drivers\etc\hosts</code>, aberto como administrador): <code>&lt;IP_NODE_K3S&gt;  &lt;HOST_APLICACAO&gt;</code>. Depois, acesse <code>http://&lt;HOST_APLICACAO&gt;/</code>.</p>
+<p><strong>Depois do DNS:</strong></p>
+<pre><code class="language-bash">nslookup &lt;HOST_APLICACAO&gt;
+curl -i http://&lt;HOST_APLICACAO&gt;/
+</code></pre>
+<p><strong>Esperado:</strong> o <code>nslookup</code> devolve <code>&lt;IP_NODE_K3S&gt;</code>, e o <code>curl</code>, <code>HTTP/1.1 200 OK</code>.</p>
+<p><strong>Carga pelo Ingress</strong> (opcional, no lugar do NodePort do passo 4): use o mesmo comando de carga, trocando a URL por <code>http://&lt;IP_NODE_K3S&gt;/</code> e acrescentando <code>-H &quot;Host: &lt;HOST_APLICACAO&gt;&quot;</code> ao <code>curl</code>. Assim o HPA é provado também pelo caminho do Ingress.</p>
+<h3>5.4 HTTPS (opcional)</h3>
+<p>Você precisa do certificado e da chave para <code>&lt;HOST_APLICACAO&gt;</code> (o nome precisa constar no certificado). Crie o Secret no editor:</p>
+<pre><code class="language-bash">umask 077
+vi /tmp/tls-secret.yaml
+</code></pre>
+<p>Cole este conteúdo, cole o certificado e a chave (em PEM) nos campos indicados, e salve:</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Secret
+metadata:
+  name: aplicacao-tls
+  namespace: hpa-teste
+type: kubernetes.io/tls
+stringData:
+  tls.crt: |
+    &lt;CERTIFICADO_PEM_COM_A_CADEIA&gt;
+  tls.key: |
+    &lt;CHAVE_PRIVADA_PEM&gt;
+</code></pre>
+<pre><code class="language-bash">kubectl apply -f /tmp/tls-secret.yaml
+rm -f /tmp/tls-secret.yaml
+</code></pre>
+<p>Depois, abra o Ingress (<code>vi /tmp/ingress.yaml</code>), acrescente o bloco <code>tls</code> ao <code>spec</code>, no mesmo nível de <code>rules</code>, e reaplique:</p>
+<pre><code class="language-yaml">  tls:
+  - hosts:
+    - &lt;HOST_APLICACAO&gt;
+    secretName: aplicacao-tls
+</code></pre>
+<pre><code class="language-bash">kubectl apply -f /tmp/ingress.yaml
+curl -i https://&lt;HOST_APLICACAO&gt;/
+</code></pre>
+<p><strong>Esperado:</strong> <code>HTTP/1.1 200 OK</code>, sem aviso de certificado no navegador. Não coloque a chave privada em chat nem em Git.</p>
+<h2>6. Limpeza</h2>
+<pre><code class="language-bash">kubectl delete namespace hpa-teste
+rm -f /tmp/hpa.yaml /tmp/ingress.yaml /tmp/nginx-hpa.yaml
+</code></pre>
+<p>Apagar o namespace remove o Deployment, o Service, o HPA, o Ingress e o Secret de uma vez.</p>
+<h2>Se der erro</h2>
+<table>
+<thead>
+<tr>
+<th>Sintoma</th>
+<th>Causa provável</th>
+<th>O que fazer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HPA com <code>&lt;unknown&gt;/50%</code> e o evento <code>missing request for cpu</code></td>
+<td>O Deployment não tem <code>requests.cpu</code></td>
+<td>Preencher a reserva de CPU (passo 2) e esperar o pod ser recriado</td>
+</tr>
+<tr>
+<td>Evento <code>failed to get cpu utilization</code> ou <code>metrics not available</code></td>
+<td>O metrics-server não está disponível</td>
+<td><code>kubectl get apiservice v1beta1.metrics.k8s.io</code> e <code>kubectl -n kube-system get pods | grep metrics</code></td>
+</tr>
+<tr>
+<td>HPA não sobe as réplicas</td>
+<td>A carga é baixa demais</td>
+<td>Mais loops, ou reserva de CPU menor</td>
+</tr>
+<tr>
+<td><code>REPLICAS</code> não passa de um valor, e o HPA mostra <code>ScalingLimited</code></td>
+<td>Chegou ao <code>maxReplicas</code> ou faltou capacidade no nó</td>
+<td><code>kubectl describe hpa</code>; ajustar o máximo</td>
+</tr>
+<tr>
+<td>Pod em <code>ImagePullBackOff</code></td>
+<td>O nó não baixa a imagem</td>
+<td>Guia do Quay (<code>registries.yaml</code>)</td>
+</tr>
+<tr>
+<td>Ingress: <code>404 page not found</code> do Traefik</td>
+<td>Nenhuma regra casou: o <code>Host</code> enviado difere do Ingress</td>
+<td>Conferir o <code>Host</code> do <code>curl</code> e o <code>host</code> do Ingress</td>
+</tr>
+<tr>
+<td>Ingress: <code>503</code> ou <code>502</code></td>
+<td>O Service ou a porta do <code>backend</code> está errado, ou o pod não está pronto</td>
+<td><code>kubectl get endpoints -n hpa-teste</code> (deve listar o IP do pod)</td>
+</tr>
+<tr>
+<td><code>nslookup</code> não resolve</td>
+<td>O registro DNS não existe</td>
+<td>Pedir ao admin de DNS; usar o <code>Host</code> ou o arquivo <code>hosts</code></td>
+</tr>
+<tr>
+<td>Sem resposta em <code>&lt;IP_NODE_K3S&gt;:80</code></td>
+<td>Firewall, ou o Traefik não está no ar</td>
+<td><code>kubectl -n kube-system get svc traefik</code>; liberar a porta</td>
+</tr>
+<tr>
+<td>Navegador avisa de certificado</td>
+<td>O Traefik usa o certificado padrão</td>
+<td>Passo 5.4</td>
+</tr>
+<tr>
+<td><code>kubectl get ingressclass</code> vazio</td>
+<td>O cluster não tem controlador de Ingress</td>
+<td>Habilitar o Traefik do k3s ou instalar um controlador pelo Rancher (<strong>Apps</strong>); o <code>ingressClassName</code> do Ingress precisa ser o nome dele</td>
+</tr>
+</tbody>
+</table>
+<h2>Evidências para o relatório</h2>
+<ul>
+<li>Saída de <code>kubectl get hpa -n hpa-teste</code> antes, durante e depois da carga.</li>
+<li>A seção de eventos de <code>kubectl describe hpa nginx-hpa -n hpa-teste</code>.</li>
+<li><code>kubectl get pods -n hpa-teste</code> com várias réplicas.</li>
+<li>O <code>curl</code> ao <code>&lt;HOST_APLICACAO&gt;</code> com <code>HTTP 200</code>.</li>
+</ul>
+<p>Se esse mesmo Deployment for levado depois para o Argo ou o Fleet, retire o campo <code>spec.replicas</code> do Deployment no Git (ou configure o Argo para ignorá-lo). Caso contrário, a sincronização devolve o número de réplicas ao valor do Git e briga com o HPA.</p>
+
+</body></html>

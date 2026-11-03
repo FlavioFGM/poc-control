@@ -21,6 +21,7 @@ from app.models import (
     StatusExtracao,
     StatusItem,
 )
+from app.classificacao.tasks import classificar_pendentes
 from app.pocs.planner_import import itens_do_planejador
 from app.pocs.resultados import sincronizar_resultado_catalogo
 
@@ -135,6 +136,12 @@ def processar_extracao(
         db.commit()
     finally:
         db.close()
+
+    # Encadeia a classificação item a item logo após a extração, igual o RFI já faz -- mesmo
+    # espírito de "cada resultado aparece assim que fica pronto" em vez de depender do clique
+    # manual em "Classificar pendentes" (que continua funcionando, pra reprocessar itens
+    # adicionados/editados depois ou que falharam na primeira passada).
+    classificar_pendentes(poc_id, api_key=api_key, model=model)
 
 
 def _criar_itens_do_planejador(db, poc: Poc, planejador: dict) -> None:
